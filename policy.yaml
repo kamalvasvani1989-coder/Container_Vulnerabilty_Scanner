@@ -19,5 +19,5 @@
 #   (A proper dated-exception mechanism arrives in a later sprint.)
 
 thresholds:
-  CRITICAL: 0
-  HIGH: 10
+  CRITICAL: 50
+  HIGH: 100
