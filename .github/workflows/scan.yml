@@ -1,0 +1,53 @@
+name: Container Image Scan
+
+# When to run: on every push to main, and on pull requests targeting main.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Get your repo onto the runner.
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 2. Python, to run scanner.py.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 3. The scanner's only dependency.
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      # 4. Cache Trivy's vulnerability DB so we don't re-download it
+      #    (~150 MB) on every run. This is the main cost optimisation.
+      - name: Cache Trivy database
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: |
+            trivy-db-
+
+      # 5. Install Trivy on the runner (official install script).
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+
+      # 6. Build the image under test from your Dockerfile.
+      - name: Build image
+        run: docker build -t vuln-scanner-test:ci .
+
+      # 7. Run your scanner against the image we just built.
+      #    Its exit code (0/1/2) becomes this step's result, and the
+      #    job fails on any non-zero — that's the gate.
+      - name: Run vulnerability scan
+        run: python scanner.py vuln-scanner-test:ci
