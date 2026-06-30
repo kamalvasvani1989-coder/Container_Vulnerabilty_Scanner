@@ -106,3 +106,4 @@ stand-in.
    that have no vulnerabilities key.
 3. **Apply gate** — counts by severity, compares to the thresholds.
 4. **Report** — prints the summary and returns the exit code.
+
