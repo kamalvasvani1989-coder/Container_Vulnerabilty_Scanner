@@ -1,0 +1,23 @@
+# Policy gate thresholds for the container vulnerability scanner.
+#
+# The build FAILS if the count of vulnerabilities at a given severity
+# EXCEEDS the limit below. "Exceeds" means strictly greater than:
+# with HIGH: 10, a scan finding exactly 10 HIGHs still PASSES; 11 FAILS.
+#
+# CRITICAL is 0 — zero tolerance. One critical blocks the build.
+#
+# Raising a limit temporarily:
+#   When an app has more HIGHs than allowed and the upstream fix is not
+#   yet released, you may raise 'high' to let the build through for now.
+#   Always record WHY and a date to review it, e.g.:
+#
+#     HIGH: 20   # raised from 10 on 2026-06-30 for app-x, pending
+#                # upstream patch for CVE-2026-xxxx; review by 2026-07-15
+#
+#   The Git commit history for this file is your audit trail — commit
+#   the change with a clear message. Tighten the value again once fixed.
+#   (A proper dated-exception mechanism arrives in a later sprint.)
+
+thresholds:
+  CRITICAL: 0
+  HIGH: 10
