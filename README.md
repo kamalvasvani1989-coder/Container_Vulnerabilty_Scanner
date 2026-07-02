@@ -54,7 +54,7 @@ Two principles drive the design:
 
 How the components connect — from a developer's commit, through the Sprint 1 orchestration layer, to the three possible outcomes. The dashed box holds components planned for later sprints.
 
-![System architecture diagram](docs/architecture.svg)
+![System architecture diagram](docs/architecture.png)
 
 The developer pushes code, an image is built, and `scanner.py` takes over: it reads thresholds from `policy.yaml`, runs Trivy against the image, and feeds the results into the policy gate. The gate produces exactly one of three exit codes — pass, policy fail, or tool error — which is what CI/CD acts on in the next sprint.
 
