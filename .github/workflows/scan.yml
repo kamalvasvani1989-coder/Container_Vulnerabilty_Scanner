@@ -19,8 +19,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install PyYAML
-        run: pip install pyyaml
+      - name: Install Python dependencies
+        run: pip install pyyaml jinja2
 
       - name: Cache Trivy database
         uses: actions/cache@v4
@@ -46,6 +46,13 @@ jobs:
       # Exit 1 (policy fail) or 2 (tool error) fails the build.
       - name: Run vulnerability scan
         run: python scanner.py vuln-scanner-test:ci --output-dir reports
+
+      # Turn the two JSON files into reports/report.html. `if: always()`
+      # so a FAIL or ERROR still gets a readable report. It only reads the
+      # verdict from scan-summary.json; it never re-decides pass/fail.
+      - name: Generate HTML report
+        if: always()
+        run: python report.py --input-dir reports
 
       # `if: always()` uploads even when the gate fails — that's when the
       # report matters most. On a tool error only scan-summary.json may
