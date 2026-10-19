@@ -21,3 +21,7 @@
 thresholds:
   CRITICAL: 0
   HIGH: 10
+# Slack alerts: severities that make the alert @channel (everyone notified).
+# Allowed: CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN, ERROR.
+alerts:
+  mention_channel_on: [CRITICAL]
