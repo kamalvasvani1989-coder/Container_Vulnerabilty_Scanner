@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Container image vulnerability scanner — Sprint 1 orchestration layer.
+Container image vulnerability scanner — orchestration layer.
 
 Wraps Trivy: runs it, parses its JSON, applies a pass/fail policy gate,
 and reports the result.
@@ -12,10 +12,17 @@ Four jobs, kept separate on purpose:
   3. apply_gate  — count by severity, compare to thresholds, decide.
   4. report      — print a summary and exit with a meaningful code.
 
-Exit codes (CI/CD in the next sprint keys off these):
+Sprint 3 addition — optional output files (--output-dir DIR):
+  trivy-report.json  — Trivy's raw JSON, byte-for-byte as Trivy produced it.
+  scan-summary.json  — our verdict: counts, thresholds, breaches, status.
+Both come from the SAME single scan, so the report and the gate decision
+can never disagree. Downstream tools (HTML report, Slack) read these files
+and never re-decide pass/fail themselves.
+
+Exit codes (CI/CD keys off these):
   0  PASS        — scan ran, policy satisfied
   1  POLICY FAIL — scan ran, too many vulnerabilities (block the build)
-  2  TOOL ERROR  — could not scan or could not read config (alert someone)
+  2  TOOL ERROR  — could not scan, read config, or write outputs
 
 The distinction between exit 1 and exit 2 is the whole point: a broken
 scanner must never look like a passing build, and a vulnerability block
@@ -24,8 +31,10 @@ must never look like a crash.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 import yaml
 
@@ -34,14 +43,28 @@ EXIT_PASS = 0
 EXIT_POLICY_FAIL = 1
 EXIT_TOOL_ERROR = 2
 
+STATUS_BY_EXIT = {
+    EXIT_PASS: "PASS",
+    EXIT_POLICY_FAIL: "FAIL",
+    EXIT_TOOL_ERROR: "ERROR",
+}
+
 DEFAULT_POLICY_PATH = "policy.yaml"
+REPORT_FILENAME = "trivy-report.json"
+SUMMARY_FILENAME = "scan-summary.json"
+SUMMARY_SCHEMA_VERSION = 1
+
+SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
 
 
 # --- Job 1: run Trivy -------------------------------------------------------
 
 def run_trivy(image):
     """
-    Run Trivy against an image and return its parsed JSON as a dict.
+    Run Trivy against an image.
+
+    Returns (raw_json_text, parsed_dict). The raw text is kept so it can be
+    saved untouched as the report artifact.
 
     Raises RuntimeError on any tool-level failure (Trivy missing, image
     not found, bad output). The caller turns that into exit code 2.
@@ -78,7 +101,7 @@ def run_trivy(image):
         )
 
     try:
-        return json.loads(completed.stdout)
+        return completed.stdout, json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"Could not parse Trivy JSON output: {exc}")
 
@@ -117,6 +140,13 @@ def count_by_severity(vulns):
     return counts
 
 
+def ordered_severities(counts):
+    """Severities in a sensible display order, then any unexpected extras."""
+    seen = [s for s in SEVERITY_ORDER if s in counts]
+    seen += sorted(s for s in counts if s not in SEVERITY_ORDER)
+    return seen
+
+
 # --- Config loading (a config problem is a TOOL error, exit 2) --------------
 
 def load_policy(path):
@@ -144,9 +174,11 @@ def load_policy(path):
         raise RuntimeError("'thresholds' must be a mapping of severity to a number.")
 
     # Normalise keys to uppercase and validate values are integers.
+    # (bool is a subclass of int in Python, so reject it explicitly —
+    # "HIGH: yes" must not quietly become a limit of 1.)
     clean = {}
     for sev, limit in thresholds.items():
-        if not isinstance(limit, int):
+        if isinstance(limit, bool) or not isinstance(limit, int):
             raise RuntimeError(
                 f"Threshold for {sev} must be a whole number, got {limit!r}."
             )
@@ -164,15 +196,16 @@ def apply_gate(counts, thresholds):
     Only severities listed in the policy are enforced; anything not
     listed (e.g. MEDIUM, LOW) is reported but does not gate.
 
-    Returns (passed: bool, breaches: list of human-readable strings).
+    Returns (passed: bool, breaches: list of dicts with
+    severity / found / limit). Structured rather than pre-formatted text,
+    so the console, the summary file and later the HTML report and Slack
+    message can each present it their own way.
     """
     breaches = []
     for sev, limit in thresholds.items():
         found = counts.get(sev, 0)
         if found > limit:
-            breaches.append(
-                f"{sev}: found {found}, limit is {limit}"
-            )
+            breaches.append({"severity": sev, "found": found, "limit": limit})
     return (len(breaches) == 0, breaches)
 
 
@@ -184,11 +217,7 @@ def report(image, counts, thresholds, passed, breaches):
     print("-" * 50)
 
     if counts:
-        # Show severities in a sensible order, then any extras.
-        order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
-        seen = [s for s in order if s in counts]
-        seen += [s for s in counts if s not in order]
-        for sev in seen:
+        for sev in ordered_severities(counts):
             gated = " (gated)" if sev in thresholds else ""
             print(f"  {sev:<9} {counts[sev]}{gated}")
     else:
@@ -200,8 +229,74 @@ def report(image, counts, thresholds, passed, breaches):
     else:
         print("RESULT: FAIL — policy gate breached:")
         for b in breaches:
-            print(f"  - {b}")
+            print(f"  - {b['severity']}: found {b['found']}, limit is {b['limit']}")
         print()
+
+
+# --- Output files (Sprint 3) ------------------------------------------------
+
+def build_summary(image, exit_code, *, counts=None, thresholds=None,
+                  breaches=None, trivy_output=None, error=None):
+    """
+    Build the scan-summary.json content.
+
+    This is the single source of truth for the verdict. Anything that
+    presents results later (HTML report, Slack) reads 'status' from here
+    instead of re-applying the policy.
+    """
+    counts = counts or {}
+    trivy_meta = (trivy_output or {}).get("Trivy") or {}
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "image": image,
+        "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "status": STATUS_BY_EXIT[exit_code],
+        "exit_code": exit_code,
+        "trivy_version": trivy_meta.get("Version"),
+        "total": sum(counts.values()),
+        "counts": {sev: counts[sev] for sev in ordered_severities(counts)},
+        "thresholds": thresholds,
+        "breaches": breaches or [],
+        "error": error,
+    }
+
+
+def write_outputs(output_dir, summary, raw_report=None):
+    """
+    Write scan-summary.json (always) and trivy-report.json (when a scan
+    produced one) into output_dir.
+
+    Raises RuntimeError if the files can't be written. The caller treats
+    that as a TOOL error: if CI expects these artifacts and they are
+    missing, the tool is broken, even if the scan itself passed.
+    """
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        if raw_report is not None:
+            with open(os.path.join(output_dir, REPORT_FILENAME), "w") as f:
+                f.write(raw_report)
+        with open(os.path.join(output_dir, SUMMARY_FILENAME), "w") as f:
+            json.dump(summary, f, indent=2)
+            f.write("\n")
+    except OSError as exc:
+        raise RuntimeError(f"Could not write output files to {output_dir}: {exc}")
+
+
+def fail_with_tool_error(label, exc, image, output_dir, thresholds=None):
+    """
+    Print a tool error, try to leave an ERROR summary behind (so Slack
+    can still say "the scanner broke" later), and return exit code 2.
+    """
+    print(f"{label}: {exc}", file=sys.stderr)
+    if output_dir:
+        summary = build_summary(image, EXIT_TOOL_ERROR,
+                                thresholds=thresholds, error=str(exc))
+        try:
+            write_outputs(output_dir, summary)
+        except RuntimeError as write_exc:
+            # Already failing with exit 2; just make the extra problem visible.
+            print(f"OUTPUT ERROR: {write_exc}", file=sys.stderr)
+    return EXIT_TOOL_ERROR
 
 
 # --- Entry point ------------------------------------------------------------
@@ -216,6 +311,12 @@ def main():
         default=DEFAULT_POLICY_PATH,
         help=f"Path to the policy YAML (default: {DEFAULT_POLICY_PATH})",
     )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help=(f"If set, write {REPORT_FILENAME} and {SUMMARY_FILENAME} "
+              "into this directory (created if missing)."),
+    )
     args = parser.parse_args()
 
     # Load config first — a config error is a tool error, and there's no
@@ -223,23 +324,37 @@ def main():
     try:
         thresholds = load_policy(args.policy)
     except RuntimeError as exc:
-        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
-        return EXIT_TOOL_ERROR
+        return fail_with_tool_error("CONFIG ERROR", exc, args.image, args.output_dir)
 
     # Run the scan.
     try:
-        trivy_output = run_trivy(args.image)
+        raw_report, trivy_output = run_trivy(args.image)
     except RuntimeError as exc:
-        print(f"TOOL ERROR: {exc}", file=sys.stderr)
-        return EXIT_TOOL_ERROR
+        return fail_with_tool_error("TOOL ERROR", exc, args.image,
+                                    args.output_dir, thresholds)
 
     # Parse, count, gate, report.
     vulns = parse_vulnerabilities(trivy_output)
     counts = count_by_severity(vulns)
     passed, breaches = apply_gate(counts, thresholds)
     report(args.image, counts, thresholds, passed, breaches)
+    exit_code = EXIT_PASS if passed else EXIT_POLICY_FAIL
 
-    return EXIT_PASS if passed else EXIT_POLICY_FAIL
+    # Write artifacts last, from the same scan the gate just judged.
+    if args.output_dir:
+        summary = build_summary(
+            args.image, exit_code,
+            counts=counts, thresholds=thresholds,
+            breaches=breaches, trivy_output=trivy_output,
+        )
+        try:
+            write_outputs(args.output_dir, summary, raw_report)
+        except RuntimeError as exc:
+            print(f"OUTPUT ERROR: {exc}", file=sys.stderr)
+            return EXIT_TOOL_ERROR
+        print(f"Wrote {REPORT_FILENAME} and {SUMMARY_FILENAME} to {args.output_dir}/")
+
+    return exit_code
 
 
 if __name__ == "__main__":

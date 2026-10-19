@@ -30,29 +30,30 @@ jobs:
           restore-keys: |
             trivy-db-
 
+      # Pinned to the version tested locally, so CI doesn't change
+      # behaviour on its own when Trivy releases. Bump deliberately.
       - name: Install Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
+            | sudo sh -s -- -b /usr/local/bin v0.76.0
 
       - name: Build image
         run: docker build -t vuln-scanner-test:ci .
 
-      # Produce a JSON report file for the artifact. This is separate
-      # from the gate decision below — its only job is to leave a
-      # downloadable record. It does not fail the build on findings.
-      - name: Generate scan report
-        run: trivy image --format json --output trivy-report.json --quiet vuln-scanner-test:ci
+      # The gate — and now the ONLY scan. scanner.py writes Trivy's raw
+      # JSON (trivy-report.json) and its own verdict (scan-summary.json)
+      # into reports/, from the same scan it judges.
+      # Exit 1 (policy fail) or 2 (tool error) fails the build.
+      - name: Run vulnerability scan
+        run: python scanner.py vuln-scanner-test:ci --output-dir reports
 
-      # Upload the report. `if: always()` ensures it runs even when the
-      # gate step below fails — we want the report most on a failure.
+      # `if: always()` uploads even when the gate fails — that's when the
+      # report matters most. On a tool error only scan-summary.json may
+      # exist, so a missing file is a warning, not a second failure.
       - name: Upload scan report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-scan-report
-          path: trivy-report.json
-
-      # The gate. Exit 1 (policy fail) or 2 (tool error) fails the build.
-      - name: Run vulnerability scan
-        run: python scanner.py vuln-scanner-test:ci
+          path: reports/
+          if-no-files-found: warn
