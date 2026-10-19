@@ -1,6 +1,8 @@
-# Image under test — deliberately based on an older release
-# so the scanner finds real vulnerabilities and the gate fires.
-FROM python:3.9-slim
+# Image under test — the "application" this pipeline protects.
+# Kept on a current, minimal base so it passes the policy gate.
+# To demo the gate firing, change FROM to python:3.9-slim on a
+# throwaway branch and open a PR — the scan check will block it.
+FROM python:3.13-alpine
 
 WORKDIR /app
 
