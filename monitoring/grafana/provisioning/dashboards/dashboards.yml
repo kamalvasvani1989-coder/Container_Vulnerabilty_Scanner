@@ -1,0 +1,14 @@
+# Load dashboards from JSON files (Sprint 4). The files in
+# monitoring/grafana/dashboards/ are the source of truth: changes made in
+# the Grafana UI are not saved; edit the JSON and commit it instead.
+apiVersion: 1
+
+providers:
+  - name: vuln-scanner
+    folder: Vulnerability Scanner
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

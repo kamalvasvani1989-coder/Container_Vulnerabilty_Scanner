@@ -1,0 +1,14 @@
+# Grafana datasource, provisioned from this file (Sprint 4).
+# The fixed uid lets the dashboard JSON refer to it reliably.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: vuln-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 1m        # matches the scrape interval in prometheus.yml
