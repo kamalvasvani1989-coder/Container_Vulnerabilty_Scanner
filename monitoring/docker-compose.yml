@@ -1,0 +1,78 @@
+# Sprint 4 monitoring stack: exporter -> Prometheus -> Grafana.
+#
+# One-time setup:
+#   cp monitoring/.env.example monitoring/.env    # then fill it in
+# Start (Jenkins must have been started once, so its network exists):
+#   docker compose -f monitoring/docker-compose.yml up -d --build
+# Then open http://localhost:3000 (Grafana) or http://localhost:9090 (Prometheus).
+#
+# LOCAL LAB USE ONLY. Ports are bound to 127.0.0.1, so nothing is reachable
+# from other machines. Cost: $0, it runs next to the local Jenkins.
+name: vuln-monitoring
+
+services:
+  exporter:
+    build:
+      context: ..                       # repo root: exporter.py and the scripts it imports
+      dockerfile: monitoring/exporter.Dockerfile
+    image: vuln-scanner-exporter:local
+    container_name: vuln-scanner-exporter
+    environment:
+      GITHUB_REPOSITORY: kamalvasvani1989-coder/Container_Vulnerabilty_Scanner
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?Set GITHUB_TOKEN in monitoring/.env}
+      # Reached by container name over Jenkins' own Docker network.
+      JENKINS_URL: http://vuln-scanner-jenkins:8080
+      JENKINS_USER: ${JENKINS_USER:?Set JENKINS_USER in monitoring/.env}
+      JENKINS_TOKEN: ${JENKINS_TOKEN:?Set JENKINS_TOKEN in monitoring/.env}
+    volumes:
+      # Which scans were already counted; keeps counters correct across restarts.
+      - exporter_data:/data
+    networks: [monitoring, jenkins]
+    # No ports: only Prometheus talks to the exporter.
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: vuln-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Match GitHub's 90-day artifact retention. The data is only a few MB.
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks: [monitoring]
+    depends_on: [exporter]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    container_name: vuln-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in monitoring/.env}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [monitoring]
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+networks:
+  monitoring: {}
+  jenkins:
+    external: true
+    name: jenkins_default               # created by ci/jenkins/docker-compose.yml
+
+volumes:
+  exporter_data:
+  prometheus_data:
+  grafana_data:
