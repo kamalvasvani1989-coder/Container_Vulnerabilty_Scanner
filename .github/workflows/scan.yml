@@ -60,6 +60,17 @@ jobs:
         if: always()
         run: python report.py --input-dir reports --pdf
 
+      # Alert Slack only when something needs attention. `if: failure()`
+      # runs this step only if an earlier step failed: a policy block
+      # (exit 1), a tool error (exit 2), or the pipeline breaking before
+      # the scan. A passing run stays silent. The webhook URL comes from
+      # the repository secret and is never written into the repo or logs.
+      - name: Send Slack alert
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python notify.py --input-dir reports
+
       # `if: always()` uploads even when the gate fails — that's when the
       # report matters most. On a tool error only scan-summary.json may
       # exist, so a missing file is a warning, not a second failure.
