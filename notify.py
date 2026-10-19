@@ -17,9 +17,13 @@ failing, so the pipeline still works before Slack is configured.
 Like report.py, this never re-decides pass/fail. The verdict comes from
 scan-summary.json only.
 
+The message carries the verdict and counts only. It deliberately contains
+no links: the full HTML/PDF reports stay in the GitHub Actions artifact,
+behind repository access, and never get posted into the channel.
+
 Usage:
   python notify.py                          # reads reports/scan-summary.json
-  python notify.py --input-dir reports --run-url https://...
+  python notify.py --input-dir reports
 
 Exit codes:
   0  alert sent, or nothing to send (PASS, or webhook not configured)
@@ -72,17 +76,7 @@ def load_summary(input_dir):
         }
 
 
-def run_url_from_env():
-    """Link to this GitHub Actions run, where the reports can be downloaded."""
-    server = os.environ.get("GITHUB_SERVER_URL")
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    run_id = os.environ.get("GITHUB_RUN_ID")
-    if server and repo and run_id:
-        return f"{server}/{repo}/actions/runs/{run_id}"
-    return None
-
-
-def build_message(summary, run_url):
+def build_message(summary):
     """Build the Slack payload: a plain-text fallback plus formatted blocks."""
     status = summary.get("status")
     image = slack_escape(summary.get("image", "unknown"))
@@ -112,8 +106,6 @@ def build_message(summary, run_url):
     sha = os.environ.get("GITHUB_SHA")
     if sha:
         context.append(f"Commit: `{sha[:7]}`")
-    if run_url:
-        context.append(f"<{run_url}|Open the run and download the HTML/PDF report>")
 
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{headline}*"}},
@@ -160,8 +152,6 @@ def main():
     parser = argparse.ArgumentParser(description="Send a Slack alert for a failed or broken scan.")
     parser.add_argument("--input-dir", default="reports",
                         help="Folder containing scan-summary.json (default: reports)")
-    parser.add_argument("--run-url", default=None,
-                        help="Link to include in the message (default: this GitHub Actions run)")
     args = parser.parse_args()
 
     summary = load_summary(args.input_dir)
@@ -177,7 +167,7 @@ def main():
         print("::notice::SLACK_WEBHOOK_URL is not set, so no Slack alert was sent.")
         return EXIT_OK
 
-    payload = build_message(summary, args.run_url or run_url_from_env())
+    payload = build_message(summary)
     try:
         post_to_slack(webhook_url, payload)
     except RuntimeError as exc:
