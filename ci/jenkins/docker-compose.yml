@@ -1,4 +1,8 @@
-# Starts the local Jenkins for this project:
+# Starts the local Jenkins for this project. One-time, per machine, record
+# the Docker socket's group number (needs the image built once first):
+#   echo "DOCKER_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+#     --entrypoint stat vuln-scanner-jenkins:local -c %g /var/run/docker.sock)" > ci/jenkins/.env
+# Then:
 #   docker compose -f ci/jenkins/docker-compose.yml up -d --build
 # Then open http://localhost:8080
 #
@@ -19,10 +23,12 @@ services:
       # Jobs, credentials, build history and the Trivy DB cache survive restarts.
       - jenkins_home:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
-    # Under Docker Desktop the socket belongs to the root group; this lets
-    # the (non-root) jenkins user use it without running Jenkins as root.
+    # Lets the (non-root) jenkins user use the Docker socket by joining the
+    # socket's group. The group number differs between machines, so it is
+    # read from DOCKER_GID in ci/jenkins/.env (machine-specific, not
+    # committed). Compose stops with this message if it isn't set.
     group_add:
-      - "0"
+      - "${DOCKER_GID:?Set DOCKER_GID in ci/jenkins/.env (see top of this file)}"
     restart: unless-stopped
 
 volumes:
