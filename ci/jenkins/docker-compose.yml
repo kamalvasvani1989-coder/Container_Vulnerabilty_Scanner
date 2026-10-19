@@ -1,0 +1,29 @@
+# Starts the local Jenkins for this project:
+#   docker compose -f ci/jenkins/docker-compose.yml up -d --build
+# Then open http://localhost:8080
+#
+# LOCAL LAB USE ONLY.
+# Mounting the Docker socket lets Jenkins build and scan images, but it
+# also gives Jenkins full control of Docker on this machine (equivalent to
+# admin rights). That's acceptable for a personal lab; a production Jenkins
+# would use a dedicated build agent or a rootless builder instead.
+services:
+  jenkins:
+    build: .
+    image: vuln-scanner-jenkins:local
+    container_name: vuln-scanner-jenkins
+    ports:
+      # Bound to localhost only: not reachable from other machines.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Jobs, credentials, build history and the Trivy DB cache survive restarts.
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Under Docker Desktop the socket belongs to the root group; this lets
+    # the (non-root) jenkins user use it without running Jenkins as root.
+    group_add:
+      - "0"
+    restart: unless-stopped
+
+volumes:
+  jenkins_home:
