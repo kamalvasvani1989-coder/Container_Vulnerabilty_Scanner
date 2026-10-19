@@ -1,0 +1,46 @@
+name: Weekly Vulnerability Summary
+
+# Sprint 3: daily/weekly summary alerts.
+# Posts one Slack message summarising every scan from the last 7 days,
+# read from the trivy-scan-report artifacts the scan workflow already keeps.
+on:
+  schedule:
+    # Every Monday 03:30 UTC (09:00 IST). For a daily summary, use
+    # "30 3 * * *" and pass --days 1.
+    - cron: "30 3 * * 1"
+  # Also runnable by hand from the Actions tab (useful for demos).
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days to cover"
+        required: false
+        default: "7"
+
+# Least privilege: read run history and artifacts, nothing else.
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Send summary to Slack
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Passed through env, not pasted into the command, so the input
+          # can't inject shell code. digest.py rejects anything not a number.
+          DAYS: ${{ inputs.days || '7' }}
+        run: python digest.py --days "$DAYS"

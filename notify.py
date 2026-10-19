@@ -9,6 +9,11 @@ attention:
   ERROR  — the scanner itself broke (no pass/fail decision was made)
 A PASS sends nothing: alerts that fire on every success get ignored.
 
+Alerts are customised by severity level (Sprint 3 brief):
+  the colour and wording follow the worst severity found, and severities
+  listed under alerts.mention_channel_on in policy.yaml (default: CRITICAL)
+  make the alert @channel, so everyone is notified immediately.
+
 The webhook URL is a secret. It is read from the SLACK_WEBHOOK_URL
 environment variable (a GitHub Actions secret in CI) and is never printed.
 If it isn't set, the script skips the alert with a notice instead of
@@ -23,7 +28,8 @@ behind repository access, and never get posted into the channel.
 
 Usage:
   python notify.py                          # reads reports/scan-summary.json
-  python notify.py --input-dir reports
+  python notify.py --input-dir reports --policy policy.yaml
+  python notify.py --dry-run                # print the message, don't send it
 
 Exit codes:
   0  alert sent, or nothing to send (PASS, or webhook not configured)
@@ -37,12 +43,26 @@ import sys
 import urllib.error
 import urllib.request
 
-from scanner import SEVERITY_ORDER, SUMMARY_FILENAME
+import yaml
+
+from scanner import DEFAULT_POLICY_PATH, SEVERITY_ORDER, SUMMARY_FILENAME
 
 EXIT_OK = 0
 EXIT_ERROR = 2
 
 TIMEOUT_SECONDS = 10
+
+# Used when policy.yaml has no 'alerts' section.
+DEFAULT_MENTION_ON = ["CRITICAL"]
+
+# Visual level per worst severity found.
+SEVERITY_STYLE = {
+    "CRITICAL": (":red_circle:", "Critical vulnerabilities found"),
+    "HIGH": (":large_orange_circle:", "High-severity vulnerabilities found"),
+    "MEDIUM": (":large_yellow_circle:", "Medium-severity vulnerabilities found"),
+    "LOW": (":large_blue_circle:", "Low-severity vulnerabilities found"),
+    "UNKNOWN": (":white_circle:", "Vulnerabilities found"),
+}
 
 
 def slack_escape(text):
@@ -76,17 +96,61 @@ def load_summary(input_dir):
         }
 
 
-def build_message(summary):
+def load_alert_config(policy_path):
+    """
+    Read alerts.mention_channel_on from policy.yaml.
+
+    Allowed values: severity names (CRITICAL, HIGH, ...) and ERROR.
+    The alert must still go out if this section is missing or wrong, so
+    problems fall back to the default with a warning instead of failing.
+    """
+    try:
+        with open(policy_path, "r") as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        print(f"::warning::Could not read {policy_path} ({exc}); "
+              f"using default mention_channel_on {DEFAULT_MENTION_ON}.")
+        return DEFAULT_MENTION_ON
+
+    alerts = data.get("alerts") if isinstance(data, dict) else None
+    if alerts is None:
+        return DEFAULT_MENTION_ON
+    mention_on = alerts.get("mention_channel_on") if isinstance(alerts, dict) else None
+    if not isinstance(mention_on, list) or not all(isinstance(x, str) for x in mention_on):
+        print("::warning::alerts.mention_channel_on in policy.yaml must be a list "
+              f"like [CRITICAL]; using default {DEFAULT_MENTION_ON}.")
+        return DEFAULT_MENTION_ON
+    return [x.upper() for x in mention_on]
+
+
+def worst_severity(counts):
+    """The most severe level with at least one finding, or None."""
+    for sev in SEVERITY_ORDER:
+        if counts.get(sev, 0) > 0:
+            return sev
+    return None
+
+
+def should_mention(summary, mention_on):
+    """@channel when the scan errored (if ERROR is listed) or found any listed severity."""
+    if summary.get("status") == "ERROR":
+        return "ERROR" in mention_on
+    counts = summary.get("counts") or {}
+    return any(counts.get(sev, 0) > 0 for sev in mention_on)
+
+
+def build_message(summary, mention_on=DEFAULT_MENTION_ON):
     """Build the Slack payload: a plain-text fallback plus formatted blocks."""
     status = summary.get("status")
     image = slack_escape(summary.get("image", "unknown"))
 
     if status == "FAIL":
-        headline = f":red_circle: Blocked by the policy gate: {image}"
+        counts = summary.get("counts") or {}
+        emoji, label = SEVERITY_STYLE.get(worst_severity(counts), (":red_circle:", "Policy limits exceeded"))
+        headline = f"{emoji} {label}, build blocked: {image}"
         lines = ["The build is blocked until these are fixed:"]
         for b in summary.get("breaches") or []:
             lines.append(f"• *{b['severity']}*: {b['found']} found, limit is {b['limit']}")
-        counts = summary.get("counts") or {}
         shown = [s for s in SEVERITY_ORDER if s in counts]
         if shown:
             lines.append("All findings: " + ", ".join(f"{s} {counts[s]}" for s in shown))
@@ -107,8 +171,12 @@ def build_message(summary):
     if sha:
         context.append(f"Commit: `{sha[:7]}`")
 
+    mention = should_mention(summary, mention_on)
+    # <!channel> is Slack's syntax for an @channel mention.
+    title = f"<!channel> *{headline}*" if mention else f"*{headline}*"
+
     blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{headline}*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": title}},
         {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
     ]
     if context:
@@ -116,7 +184,8 @@ def build_message(summary):
                        "elements": [{"type": "mrkdwn", "text": "  |  ".join(context)}]})
 
     # 'text' is what notifications and screen readers show.
-    return {"text": headline, "blocks": blocks}
+    text = f"<!channel> {headline}" if mention else headline
+    return {"text": text, "blocks": blocks}
 
 
 def post_to_slack(webhook_url, payload):
@@ -152,6 +221,10 @@ def main():
     parser = argparse.ArgumentParser(description="Send a Slack alert for a failed or broken scan.")
     parser.add_argument("--input-dir", default="reports",
                         help="Folder containing scan-summary.json (default: reports)")
+    parser.add_argument("--policy", default=DEFAULT_POLICY_PATH,
+                        help=f"Policy file with the alerts section (default: {DEFAULT_POLICY_PATH})")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print the Slack message instead of sending it")
     args = parser.parse_args()
 
     summary = load_summary(args.input_dir)
@@ -161,13 +234,17 @@ def main():
         print("Scan passed; no Slack alert needed.")
         return EXIT_OK
 
+    payload = build_message(summary, load_alert_config(args.policy))
+    if args.dry_run:
+        print(json.dumps(payload, indent=2))
+        return EXIT_OK
+
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
     if not webhook_url:
         # GitHub Actions shows '::notice::' lines as annotations on the run.
         print("::notice::SLACK_WEBHOOK_URL is not set, so no Slack alert was sent.")
         return EXIT_OK
 
-    payload = build_message(summary)
     try:
         post_to_slack(webhook_url, payload)
     except RuntimeError as exc:
