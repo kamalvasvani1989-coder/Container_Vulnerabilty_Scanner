@@ -53,14 +53,24 @@ Configuration (environment variables; secrets never on the command line):
   JENKINS_TOKEN       Jenkins API token
   JENKINS_JOB         job name (default vuln-scanner)
 
+History backfill (--backfill FILE): Prometheus only records from the moment
+it first scrapes the exporter. To show trends from before that, this mode
+replays the full history with the SAME counting code, one sample every
+4 minutes, and writes it as OpenMetrics with the original timestamps. It
+stops just before live data begins (asked from Prometheus), so backfilled
+counters end exactly where the live ones start. monitoring/backfill.sh
+then loads the file with `promtool tsdb create-blocks-from openmetrics`.
+It never reads or writes the live state file.
+
 Usage:
   python exporter.py                                   # serve on 127.0.0.1:9105
   python exporter.py --once                            # one fetch, print metrics, exit
   python exporter.py --state-file /data/state.json --listen 0.0.0.0:9105
+  python exporter.py --backfill history.om --prometheus-url http://prometheus:9090
 
-Exit codes (--once):
-  0  every configured source was read
-  2  a source could not be read (metrics are still printed)
+Exit codes (--once, --backfill):
+  0  every configured source was read (and, for --backfill, the file written)
+  2  a source could not be read, or no history file could be written
 """
 
 import argparse
@@ -91,6 +101,9 @@ DEFAULT_INTERVAL = 300          # seconds between fetches
 GITHUB_HISTORY_DAYS = 90        # GitHub's default artifact retention
 TIMEOUT_SECONDS = 30
 STATE_VERSION = 1
+BACKFILL_STEP = 240             # seconds between backfilled samples; under
+                                # Prometheus' 5-minute lookback, so no gaps
+LIVE_SERIES = 'up{job="vuln-exporter"}'      # Prometheus' own record of each scrape
 
 # The repo's own image is tagged differently per pipeline
 # (vuln-scanner-test:ci, vuln-scanner-test:jenkins-<N>). Normalise it so
@@ -348,15 +361,13 @@ def counter_families(state):
     return pairs
 
 
-def render(state, health, held=frozenset()):
-    """Prometheus text. Counters in 'held' are shown as 0 for this cycle."""
-    out = []
-
-    def metric(name, kind, help_text, lines):
-        out.append(f"# HELP {name} {help_text}")
-        out.append(f"# TYPE {name} {kind}")
-        out.extend(lines)
-
+def collect(state, health, held=frozenset()):
+    """
+    The metric values, without formatting: a list of
+    (name, kind, help, [(labels, value), ...]). Shared by the live
+    /metrics page and by --backfill, so the two can never disagree.
+    Counters in 'held' are reported as 0 for this cycle.
+    """
     pending, found, resolved, last_result, last_ts = [], [], [], [], []
     for sid, s in sorted(state.series.items()):
         base = {"source": s["source"], "image": s["image"]}
@@ -367,17 +378,15 @@ def render(state, health, held=frozenset()):
             # not as "No data" on the dashboard.
             for fix in (True, False):
                 n = sum(1 for v in vulns.values() if v["severity"] == sev and v["fix"] == fix)
-                pending.append(_line("vuln_pending",
-                                     {**base, "severity": sev,
-                                      "fix": "available" if fix else "none"}, n))
-            found.append(_line("vuln_found_total", {**base, "severity": sev},
-                               0 if hold_vulns else state.found.get(f"{sid}|{sev}", 0)))
-            resolved.append(_line("vuln_resolved_total", {**base, "severity": sev},
-                                  0 if hold_vulns else state.resolved.get(f"{sid}|{sev}", 0)))
+                pending.append(({**base, "severity": sev,
+                                 "fix": "available" if fix else "none"}, n))
+            found.append(({**base, "severity": sev},
+                          0 if hold_vulns else state.found.get(f"{sid}|{sev}", 0)))
+            resolved.append(({**base, "severity": sev},
+                             0 if hold_vulns else state.resolved.get(f"{sid}|{sev}", 0)))
         if s["last_status"]:
-            last_result.append(_line("scan_last_result", base,
-                                     EXIT_BY_STATUS.get(s["last_status"], 2)))
-            last_ts.append(_line("scan_last_timestamp_seconds", base, int(_epoch(s["last_when"]))))
+            last_result.append((base, EXIT_BY_STATUS.get(s["last_status"], 2)))
+            last_ts.append((base, int(_epoch(s["last_when"]))))
 
     # All three statuses for every image, so a first FAIL or ERROR is a
     # rise from 0 that Prometheus records, not a new series it ignores.
@@ -386,26 +395,147 @@ def render(state, health, held=frozenset()):
         source, image = sid.split("|", 1)
         for status in ("PASS", "FAIL", "ERROR"):
             n = 0 if ("scans", sid) in held else state.scans.get(f"{sid}|{status}", 0)
-            scans.append(_line("scans_total", {"source": source, "image": image, "status": status}, n))
+            scans.append(({"source": source, "image": image, "status": status}, n))
 
-    metric("vuln_pending", "gauge",
-           "Vulnerabilities open in the latest main-branch scan.", pending)
-    metric("vuln_found_total", "counter",
-           "Vulnerabilities seen for the first time compared with the previous scan.", found)
-    metric("vuln_resolved_total", "counter",
-           "Vulnerabilities in the previous scan that are gone now.", resolved)
-    metric("scans_total", "counter", "Scans by result (PASS, FAIL, ERROR).", scans)
-    metric("scan_last_result", "gauge",
-           "Latest main-branch scan result as the scanner exit code: 0 pass, 1 blocked, 2 error.",
-           last_result)
-    metric("scan_last_timestamp_seconds", "gauge",
-           "When the latest main-branch scan ran (Unix time).", last_ts)
-    metric("exporter_source_up", "gauge", "1 if the last fetch from this source worked.",
-           [_line("exporter_source_up", {"source": n}, h["up"]) for n, h in sorted(health.items())])
-    metric("exporter_last_poll_timestamp_seconds", "gauge", "When this source was last fetched.",
-           [_line("exporter_last_poll_timestamp_seconds", {"source": n}, h["at"])
-            for n, h in sorted(health.items())])
+    return [
+        ("vuln_pending", "gauge",
+         "Vulnerabilities open in the latest main-branch scan.", pending),
+        ("vuln_found_total", "counter",
+         "Vulnerabilities seen for the first time compared with the previous scan.", found),
+        ("vuln_resolved_total", "counter",
+         "Vulnerabilities in the previous scan that are gone now.", resolved),
+        ("scans_total", "counter", "Scans by result (PASS, FAIL, ERROR).", scans),
+        ("scan_last_result", "gauge",
+         "Latest main-branch scan result as the scanner exit code: 0 pass, 1 blocked, 2 error.",
+         last_result),
+        ("scan_last_timestamp_seconds", "gauge",
+         "When the latest main-branch scan ran (Unix time).", last_ts),
+        ("exporter_source_up", "gauge", "1 if the last fetch from this source worked.",
+         [({"source": n}, h["up"]) for n, h in sorted(health.items())]),
+        ("exporter_last_poll_timestamp_seconds", "gauge", "When this source was last fetched.",
+         [({"source": n}, h["at"]) for n, h in sorted(health.items())]),
+    ]
+
+
+def render(state, health, held=frozenset()):
+    """Prometheus text format for the live /metrics page."""
+    out = []
+    for name, kind, help_text, samples in collect(state, health, held):
+        out.append(f"# HELP {name} {help_text}")
+        out.append(f"# TYPE {name} {kind}")
+        out.extend(_line(name, labels, value) for labels, value in samples)
     return "\n".join(out) + "\n"
+
+
+# --- History backfill -------------------------------------------------------
+
+def _prom_query(prometheus_url, query, at=None):
+    params = {"query": query}
+    if at is not None:
+        params["time"] = at
+    url = prometheus_url.rstrip("/") + "/api/v1/query?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as r:
+            return json.load(r)["data"]["result"]
+    except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not query Prometheus at {prometheus_url}: {exc}")
+
+
+def live_start(prometheus_url):
+    """
+    (Unix time of the very first live scrape of the exporter, the job and
+    instance labels Prometheus gave it). Two cheap queries: first find the
+    hour it falls in, then read that hour's raw samples and take the earliest.
+    The labels are copied onto the backfill so history and live data are the
+    SAME series; without them each series would appear twice.
+    """
+    hourly = _prom_query(prometheus_url, f"min_over_time(timestamp({LIVE_SERIES})[90d:1h])")
+    # No whole-hour mark since the stack started: it started within the last hour.
+    around = min(float(r["value"][1]) for r in hourly) if hourly else time.time()
+    raw = _prom_query(prometheus_url, f"{LIVE_SERIES}[1h]", at=around)
+    stamps = [(float(t), r["metric"]) for r in raw for t, _ in r.get("values", [])]
+    if not stamps:
+        raise RuntimeError("Prometheus has no live data from the exporter yet; start the stack first")
+    first, metric = min(stamps, key=lambda pair: pair[0])
+    return first, {"job": metric.get("job", ""), "instance": metric.get("instance", "")}
+
+
+def _om_line(name, labels, value, ts):
+    inner = ",".join(f'{k}="{_label(v)}"' for k, v in labels.items())
+    return f"{name}{{{inner}}} {value} {ts}"
+
+
+def backfill(sources, out_path, until, target_labels):
+    """
+    Replay every scan before 'until' and write OpenMetrics samples every
+    BACKFILL_STEP seconds, with the live job/instance labels added.
+    Returns (scans, series, samples, first, last).
+    """
+    scans, seen = [], set()
+    for src in sources:
+        scans.extend(src.new_scans(seen))       # a fetch error stops the backfill
+    usable = []
+    for scan in scans:
+        t = _epoch(scan["when"])
+        if not t:
+            print(f"Skipping scan {scan['key']}: unreadable time {scan['when']!r}", file=sys.stderr)
+        elif t < until:
+            usable.append((t, scan))
+    if not usable:
+        raise RuntimeError("No scans before live data started: nothing to backfill")
+    # Same order as the live exporter uses.
+    usable.sort(key=lambda pair: pair[1]["when"])
+
+    state = State()
+    series = {}         # (name, labels) -> [(t, value) at each change], first entry = start
+    order = []          # family (name, kind, help) in output order
+    first = int(min(t for t, _ in usable) // BACKFILL_STEP * BACKFILL_STEP)
+    grid = range(first, int(until) - 60, BACKFILL_STEP)
+    i, before = 0, set()
+    pending = sorted(usable, key=lambda pair: pair[0])
+    for t in grid:
+        applied = []
+        while i < len(pending) and pending[i][0] <= t:
+            applied.append(pending[i][1])
+            i += 1
+        for scan in sorted(applied, key=lambda s: s["when"]):
+            state.add(scan)
+        # A counter that first appears now starts at 0 for one sample, so
+        # its rise is recorded (same rule as the live exporter).
+        now = counter_families(state)
+        held = frozenset(now - before)
+        before = now
+        for name, kind, help_text, samples in collect(state, {}, held):
+            if (name, kind, help_text) not in order:
+                order.append((name, kind, help_text))
+            for labels, value in samples:
+                key = (name, tuple(labels.items()))
+                changes = series.setdefault(key, [])
+                if not changes or changes[-1][1] != value:
+                    changes.append((t, value))
+    last = grid[-1] if len(grid) else first
+
+    count = written_series = 0
+    with open(out_path, "w") as f:
+        for name, kind, help_text in order:
+            if not any(k[0] == name for k in series):
+                continue
+            # OpenMetrics names a counter family without the _total suffix.
+            family = name[:-len("_total")] if kind == "counter" else name
+            f.write(f"# HELP {family} {help_text}\n# TYPE {family} {kind}\n")
+            for (sname, labels), changes in series.items():
+                if sname != name or not any(v for _, v in changes):
+                    continue        # a series that was always 0 adds nothing
+                written_series += 1
+                idx = 0
+                for t in range(changes[0][0], last + 1, BACKFILL_STEP):
+                    while idx + 1 < len(changes) and changes[idx + 1][0] <= t:
+                        idx += 1
+                    f.write(_om_line(name, {**dict(labels), **target_labels},
+                                     changes[idx][1], t) + "\n")
+                    count += 1
+        f.write("# EOF\n")
+    return len(usable), written_series, count, first, last
 
 
 # --- Polling and serving ----------------------------------------------------
@@ -511,7 +641,24 @@ def main():
                         help=f"seconds between fetches (default {DEFAULT_INTERVAL})")
     parser.add_argument("--state-file", help="JSON file that keeps counters across restarts")
     parser.add_argument("--once", action="store_true", help="fetch once, print metrics, exit")
+    parser.add_argument("--backfill", metavar="FILE",
+                        help="write the scan history as OpenMetrics to FILE for promtool, then exit")
+    parser.add_argument("--prometheus-url", default="http://prometheus:9090",
+                        help="where --backfill asks when live data started")
     args = parser.parse_args()
+
+    if args.backfill:
+        try:
+            until, target = live_start(args.prometheus_url)
+            scans, nseries, samples, first, last = backfill(build_sources(), args.backfill,
+                                                            until, target)
+        except (RuntimeError, OSError, zipfile.BadZipFile, json.JSONDecodeError, KeyError) as exc:
+            print(f"BACKFILL ERROR: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        span = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        print(f"Backfill: {scans} scans replayed, {nseries} series, {samples} samples, "
+              f"{span(first)} to {span(last)} -> {args.backfill}", file=sys.stderr)
+        return EXIT_OK
 
     try:
         exporter = Exporter(build_sources(), args.state_file)
