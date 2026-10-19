@@ -1,0 +1,203 @@
+{# Sprint 3 scan report. Self-contained: no external fonts, scripts or
+   images, so it opens offline from a CI artifact and renders the same
+   way in WeasyPrint for the PDF step. #}
+{% set s = summary %}
+{% set state = {"PASS": "pass", "FAIL": "fail"}.get(s.status, "error") %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ s.status }} – {{ s.image }} – scan report</title>
+<style>
+  :root {
+    --ink: #1d2433;
+    --muted: #5f6b7a;
+    --rule: #dde2e8;
+    --paper: #ffffff;
+    --tint: #f5f7f9;
+    --pass: #17663a;
+    --pass-bg: #e7f4ec;
+    --fail: #a3201a;
+    --fail-bg: #fbeceb;
+    --error: #7a4a00;
+    --error-bg: #fdf3e1;
+    --sev-critical: #a3201a;
+    --sev-high: #b5530c;
+    --sev-medium: #8a6a00;
+    --sev-low: #3d6a8f;
+    --sev-unknown: #5f6b7a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 15px/1.5 "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 24px 48px; }
+
+  header.meta { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
+  header.meta h1 {
+    margin: 0 0 4px;
+    color: var(--ink);
+    font-size: 22px;
+    font-weight: 600;
+    word-break: break-all;
+  }
+  header.meta dl { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 24px; }
+  header.meta dt { display: inline; }
+  header.meta dd { display: inline; margin: 0 0 0 4px; color: var(--ink); }
+
+  /* The verdict is the one loud element on the page. */
+  .verdict {
+    border-left: 8px solid;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+  }
+  .verdict.pass  { border-color: var(--pass);  background: var(--pass-bg); }
+  .verdict.fail  { border-color: var(--fail);  background: var(--fail-bg); }
+  .verdict.error { border-color: var(--error); background: var(--error-bg); }
+  .verdict h2 { margin: 0; font-size: 34px; line-height: 1.15; font-weight: 700; }
+  .verdict.pass h2  { color: var(--pass); }
+  .verdict.fail h2  { color: var(--fail); }
+  .verdict.error h2 { color: var(--error); }
+  .verdict p { margin: 8px 0 0; }
+  .verdict ul { margin: 8px 0 0; padding-left: 20px; }
+  .verdict pre {
+    margin: 8px 0 0;
+    white-space: pre-wrap;
+    font: 13px/1.45 Consolas, "Courier New", monospace;
+  }
+
+  h3 { font-size: 17px; margin: 0 0 10px; }
+  section { margin-bottom: 32px; }
+  .note { color: var(--muted); font-size: 14px; margin: -4px 0 12px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; background: var(--tint); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mono { font-family: Consolas, "Courier New", monospace; font-size: 13px; word-break: break-all; }
+
+  .counts { max-width: 560px; }
+  .counts tr.breached td { background: var(--fail-bg); font-weight: 600; }
+  .result-ok { color: var(--pass); }
+  .result-bad { color: var(--fail); }
+  .result-none { color: var(--muted); }
+
+  .sev { font-weight: 600; }
+  .sev-CRITICAL { color: var(--sev-critical); }
+  .sev-HIGH     { color: var(--sev-high); }
+  .sev-MEDIUM   { color: var(--sev-medium); }
+  .sev-LOW      { color: var(--sev-low); }
+  .sev-UNKNOWN  { color: var(--sev-unknown); }
+  .nofix { color: var(--muted); }
+
+  footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--rule); padding-top: 12px; }
+
+  @media print {
+    @page { size: A4; margin: 14mm; }
+    main { max-width: none; padding: 0; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header class="meta">
+  <h1>{{ s.image }}</h1>
+  <dl>
+    <div><dt>Scanned</dt><dd>{{ s.scanned_at }}</dd></div>
+    <div><dt>Trivy</dt><dd>{{ s.trivy_version or "not available" }}</dd></div>
+    <div><dt>Findings</dt><dd>{{ s.total if state != "error" else "not available" }}</dd></div>
+  </dl>
+</header>
+
+<div class="verdict {{ state }}">
+  {% if state == "pass" %}
+    <h2>Passed the policy gate</h2>
+    <p>All gated severities are within their limits. The build can continue.</p>
+  {% elif state == "fail" %}
+    <h2>Blocked by the policy gate</h2>
+    <p>This image exceeds the policy limits. The build is blocked until these are fixed:</p>
+    <ul>
+    {% for b in s.breaches %}
+      <li><strong>{{ b.severity }}</strong>: {{ b.found }} found, limit is {{ b.limit }}</li>
+    {% endfor %}
+    </ul>
+  {% else %}
+    <h2>Scan did not complete</h2>
+    <p>The scanner hit an error, so no pass/fail decision was made. This is a tool problem, not a policy result. Fix the error below and re-run the scan.</p>
+    {% if s.error %}<pre>{{ s.error }}</pre>{% endif %}
+  {% endif %}
+</div>
+
+{% if state != "error" %}
+<section>
+  <h3>Findings by severity</h3>
+  <div class="table-wrap">
+  <table class="counts">
+    <thead>
+      <tr><th>Severity</th><th class="num">Found</th><th class="num">Limit</th><th>Result</th></tr>
+    </thead>
+    <tbody>
+    {% for row in severity_rows %}
+      <tr class="{{ 'breached' if row.breached }}">
+        <td class="sev sev-{{ row.name }}">{{ row.name }}</td>
+        <td class="num">{{ row.count }}</td>
+        <td class="num">{{ row.limit if row.gated else "–" }}</td>
+        <td>
+          {% if not row.gated %}<span class="result-none">Not gated</span>
+          {% elif row.breached %}<span class="result-bad">Over limit</span>
+          {% else %}<span class="result-ok">Within limit</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h3>Vulnerabilities ({{ vulns | length }})</h3>
+  {% if vulns %}
+  <p class="note">{{ fixable }} of {{ vulns | length }} have a fixed version available. Most severe first.</p>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>CVE</th><th>Severity</th><th>Package</th><th>Installed</th><th>Fixed in</th></tr>
+    </thead>
+    <tbody>
+    {% for v in vulns %}
+      <tr>
+        <td class="mono">{{ v.id }}</td>
+        <td class="sev sev-{{ v.severity }}">{{ v.severity }}</td>
+        <td class="mono">{{ v.package }}</td>
+        <td class="mono">{{ v.installed }}</td>
+        <td class="mono">{% if v.fixed %}{{ v.fixed }}{% else %}<span class="nofix">No fix yet</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p>No known vulnerabilities were found in this image.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<footer>
+  {% if state == "error" %}
+  Generated from scan-summary.json. No Trivy report exists because the scan did not complete. Scanner exit code {{ s.exit_code }}.
+  {% else %}
+  Generated from scan-summary.json and trivy-report.json. The verdict above is the same decision the CI gate made, exit code {{ s.exit_code }}.
+  {% endif %}
+</footer>
+
+</main>
+</body>
+</html>
