@@ -2,3 +2,4 @@
 result.json
 reports/
 ci/jenkins/.env
+__pycache__/

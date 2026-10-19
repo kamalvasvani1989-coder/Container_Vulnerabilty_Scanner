@@ -44,6 +44,21 @@ pipeline {
     }
 
     stages {
+        stage('Resolve parameters') {
+            steps {
+                script {
+                    // Read parameters through params.* (always populated with
+                    // defaults, even on a job's very first build) and fall back
+                    // to the default if a field is left empty. Later steps use
+                    // these env values, never the raw parameter variables.
+                    env.POLICY_PATH  = params.POLICY_FILE?.trim() ?: 'policy.yaml'
+                    env.TARGET_IMAGE = params.SCAN_IMAGE?.trim() ?: env.LOCAL_IMAGE
+                    echo "Image to scan: ${env.TARGET_IMAGE}"
+                    echo "Policy file:   ${env.POLICY_PATH}"
+                }
+            }
+        }
+
         stage('Set up Python') {
             steps {
                 sh '''
@@ -64,12 +79,11 @@ pipeline {
         stage('Scan') {
             steps {
                 script {
-                    env.TARGET_IMAGE = params.SCAN_IMAGE?.trim() ?: env.LOCAL_IMAGE
                     // returnStatus: we read the exit code ourselves instead of
                     // letting Jenkins fail here, so the report and archive
                     // stages still run on a FAIL or ERROR.
                     env.SCAN_EXIT = sh(
-                        script: '$VENV_PY scanner.py "$TARGET_IMAGE" --policy "$POLICY_FILE" --output-dir reports',
+                        script: '$VENV_PY scanner.py "$TARGET_IMAGE" --policy "$POLICY_PATH" --output-dir reports',
                         returnStatus: true
                     ).toString()
                     echo "scanner.py exit code: ${env.SCAN_EXIT}"
@@ -120,7 +134,7 @@ pipeline {
                         // variables, so map Jenkins' own values onto them.
                         sh '''
                             GITHUB_REF_NAME="${GIT_BRANCH#origin/}" GITHUB_SHA="$GIT_COMMIT" \
-                              $VENV_PY notify.py --input-dir reports --policy "$POLICY_FILE"
+                              $VENV_PY notify.py --input-dir reports --policy "${POLICY_PATH:-policy.yaml}"
                         '''
                     }
                 } catch (err) {
