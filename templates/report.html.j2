@@ -102,6 +102,17 @@
     main { max-width: none; padding: 0; }
     thead { display: table-header-group; }
     tr { page-break-inside: avoid; }
+
+    /* A4 is narrower than a screen. Keep identifiers whole: a CVE ID
+       split across lines can't be copied or searched correctly. */
+    table { font-size: 12px; }
+    th, td { padding: 5px 7px; }
+    td.mono {
+      font-size: 10.5px;
+      word-break: normal;          /* no breaking mid-identifier...        */
+      overflow-wrap: break-word;   /* ...unless a value truly can't fit.   */
+    }
+    td.cve { white-space: nowrap; }
   }
 </style>
 </head>
@@ -174,7 +185,7 @@
     <tbody>
     {% for v in vulns %}
       <tr>
-        <td class="mono">{{ v.id }}</td>
+        <td class="mono cve">{{ v.id }}</td>
         <td class="sev sev-{{ v.severity }}">{{ v.severity }}</td>
         <td class="mono">{{ v.package }}</td>
         <td class="mono">{{ v.installed }}</td>

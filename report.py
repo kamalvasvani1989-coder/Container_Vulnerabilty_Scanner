@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Sprint 3, step 2 — HTML report.
+Sprint 3, steps 2 and 3 — HTML and PDF report.
 
 Reads the two files scanner.py writes with --output-dir:
   scan-summary.json  — the verdict (status, counts, thresholds, breaches)
   trivy-report.json  — Trivy's raw JSON (the per-CVE detail)
-and renders them into one self-contained HTML page.
+and renders them into one self-contained HTML page. With --pdf, the same
+HTML is also printed to PDF with WeasyPrint, so both always match.
 
 This script never re-decides pass/fail. The verdict comes from
 scan-summary.json only, so the report can't disagree with the gate.
@@ -13,10 +14,11 @@ scan-summary.json only, so the report can't disagree with the gate.
 Usage:
   python report.py                       # reads reports/, writes reports/report.html
   python report.py --input-dir reports --output reports/report.html
+  python report.py --pdf                 # also writes reports/report.pdf
 
 Exit codes:
   0  report written
-  2  could not read the inputs or write the report
+  2  could not read the inputs or write the report (HTML or PDF)
 """
 
 import argparse
@@ -105,6 +107,27 @@ def render(context, template_dir):
     return env.get_template(TEMPLATE_NAME).render(**context)
 
 
+def write_pdf(html, pdf_path, base_dir):
+    """
+    Print the already-rendered HTML to PDF.
+
+    Imported here rather than at the top, so the HTML report keeps working
+    on a machine where WeasyPrint (and its system libraries) isn't installed.
+    The template's @media print rules set A4 pages and repeat table headers.
+    """
+    try:
+        from weasyprint import HTML
+    except (ImportError, OSError) as exc:
+        # OSError: WeasyPrint is installed but its system libraries
+        # (Pango) are missing.
+        raise RuntimeError(
+            f"WeasyPrint is not available ({exc}). "
+            "Install it with: pip install weasyprint "
+            "(and the Pango system libraries, see the README)."
+        )
+    HTML(string=html, base_url=base_dir).write_pdf(pdf_path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Render a scan as an HTML report.")
     parser.add_argument("--input-dir", default="reports",
@@ -113,8 +136,11 @@ def main():
                         help="HTML file to write (default: <input-dir>/report.html)")
     parser.add_argument("--template-dir", default=DEFAULT_TEMPLATE_DIR,
                         help="Folder containing report.html.j2")
+    parser.add_argument("--pdf", action="store_true",
+                        help="Also write a PDF next to the HTML (needs WeasyPrint)")
     args = parser.parse_args()
     output = args.output or os.path.join(args.input_dir, "report.html")
+    pdf_output = os.path.splitext(output)[0] + ".pdf"
 
     try:
         summary = load_json(os.path.join(args.input_dir, SUMMARY_FILENAME), required=True)
@@ -123,11 +149,15 @@ def main():
         html = render(build_context(summary, trivy_output), args.template_dir)
         with open(output, "w") as f:
             f.write(html)
+        print(f"Wrote {output}")
+
+        if args.pdf:
+            write_pdf(html, pdf_output, os.path.dirname(os.path.abspath(output)))
+            print(f"Wrote {pdf_output}")
     except Exception as exc:  # any failure here is a reporting error, never a verdict
         print(f"REPORT ERROR: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
-    print(f"Wrote {output}")
     return EXIT_OK
 
 
