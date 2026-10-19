@@ -38,6 +38,13 @@ and Jenkins keeps only the last 30 builds. So the exporter remembers which
 scans it already counted in a small JSON state file (--state-file) and only
 adds new ones; old scans dropping out of the history never lower a counter.
 
+Prometheus takes the first value of a brand-new counter as its starting
+point, not as an increase. So every image always reports all three scan
+statuses (starting at 0), and counters for an image that first appears
+after start-up are shown as 0 for one fetch cycle before their real value,
+so the rise is recorded. (History loaded at the very first start is
+published straight away.)
+
 Configuration (environment variables; secrets never on the command line):
   GITHUB_TOKEN        fine-grained PAT, this repo only, Actions: read
   GITHUB_REPOSITORY   owner/repo
@@ -334,7 +341,15 @@ def _epoch(iso):
         return 0
 
 
-def render(state, health):
+def counter_families(state):
+    """(family, series_id) pairs that have counters, for spotting new ones."""
+    pairs = {("vulns", sid) for sid in state.series}
+    pairs |= {("scans", key.rsplit("|", 1)[0]) for key in state.scans}
+    return pairs
+
+
+def render(state, health, held=frozenset()):
+    """Prometheus text. Counters in 'held' are shown as 0 for this cycle."""
     out = []
 
     def metric(name, kind, help_text, lines):
@@ -346,6 +361,7 @@ def render(state, health):
     for sid, s in sorted(state.series.items()):
         base = {"source": s["source"], "image": s["image"]}
         vulns = s["vulns"] or {}
+        hold_vulns = ("vulns", sid) in held
         for sev in SEVERITY_ORDER:
             # Every severity always gets a value, so "0" shows as 0 and
             # not as "No data" on the dashboard.
@@ -355,18 +371,22 @@ def render(state, health):
                                      {**base, "severity": sev,
                                       "fix": "available" if fix else "none"}, n))
             found.append(_line("vuln_found_total", {**base, "severity": sev},
-                               state.found.get(f"{sid}|{sev}", 0)))
+                               0 if hold_vulns else state.found.get(f"{sid}|{sev}", 0)))
             resolved.append(_line("vuln_resolved_total", {**base, "severity": sev},
-                                  state.resolved.get(f"{sid}|{sev}", 0)))
+                                  0 if hold_vulns else state.resolved.get(f"{sid}|{sev}", 0)))
         if s["last_status"]:
             last_result.append(_line("scan_last_result", base,
                                      EXIT_BY_STATUS.get(s["last_status"], 2)))
             last_ts.append(_line("scan_last_timestamp_seconds", base, int(_epoch(s["last_when"]))))
 
+    # All three statuses for every image, so a first FAIL or ERROR is a
+    # rise from 0 that Prometheus records, not a new series it ignores.
     scans = []
-    for key, n in sorted(state.scans.items()):
-        source, image, status = key.split("|")
-        scans.append(_line("scans_total", {"source": source, "image": image, "status": status}, n))
+    for sid in sorted({key.rsplit("|", 1)[0] for key in state.scans}):
+        source, image = sid.split("|", 1)
+        for status in ("PASS", "FAIL", "ERROR"):
+            n = 0 if ("scans", sid) in held else state.scans.get(f"{sid}|{status}", 0)
+            scans.append(_line("scans_total", {"source": source, "image": image, "status": status}, n))
 
     metric("vuln_pending", "gauge",
            "Vulnerabilities open in the latest main-branch scan.", pending)
@@ -397,6 +417,7 @@ class Exporter:
         self.state = State.load(state_file)
         self.health = {s.name: {"up": 0, "at": 0} for s in sources}
         self.lock = threading.Lock()
+        self.held = frozenset()     # counters shown as 0 for one cycle
         self.text = render(self.state, self.health)
 
     def poll(self):
@@ -413,8 +434,13 @@ class Exporter:
                 self.health[src.name] = {"up": 0, "at": int(time.time())}
                 all_ok = False
         with self.lock:
+            first_load = not self.state.seen
+            before = counter_families(self.state)
             for scan in sorted(new, key=lambda s: s["when"]):
                 self.state.add(scan)
+            # Counters that appeared just now start at 0 for one cycle, so
+            # Prometheus sees them rise. Not for the very first history load.
+            self.held = frozenset() if first_load else frozenset(counter_families(self.state) - before)
             if new:
                 print(f"Counted {len(new)} new scan(s).", file=sys.stderr)
             try:
@@ -422,7 +448,7 @@ class Exporter:
             except OSError as exc:
                 print(f"STATE ERROR: could not save {self.state_file}: {exc}", file=sys.stderr)
                 all_ok = False
-            self.text = render(self.state, self.health)
+            self.text = render(self.state, self.health, self.held)
         return all_ok
 
     def metrics(self):

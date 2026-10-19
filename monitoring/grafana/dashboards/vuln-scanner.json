@@ -1,0 +1,1147 @@
+{
+  "uid": "vuln-scanner",
+  "title": "Container Vulnerability Scanner",
+  "description": "Sprint 4: vulnerability trends from GitHub Actions and Jenkins scans (found, resolved, pending).",
+  "tags": [
+    "vuln-scanner",
+    "trivy"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "source",
+        "label": "Source",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "hide": 0,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "vuln-prometheus"
+        },
+        "query": {
+          "query": "label_values(vuln_pending, source)",
+          "refId": "var"
+        },
+        "definition": "label_values(vuln_pending, source)",
+        "refresh": 2,
+        "sort": 1,
+        "regex": ""
+      },
+      {
+        "name": "image",
+        "label": "Image",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "hide": 0,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "vuln-prometheus"
+        },
+        "query": {
+          "query": "label_values(vuln_pending{source=~\"$source\"}, image)",
+          "refId": "var"
+        },
+        "definition": "label_values(vuln_pending{source=~\"$source\"}, image)",
+        "refresh": 2,
+        "sort": 1,
+        "regex": ""
+      },
+      {
+        "name": "severity",
+        "label": "Severity",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "hide": 0,
+        "skipUrlSync": false,
+        "type": "custom",
+        "query": "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN",
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "CRITICAL",
+            "value": "CRITICAL",
+            "selected": false
+          },
+          {
+            "text": "HIGH",
+            "value": "HIGH",
+            "selected": false
+          },
+          {
+            "text": "MEDIUM",
+            "value": "MEDIUM",
+            "selected": false
+          },
+          {
+            "text": "LOW",
+            "value": "LOW",
+            "selected": false
+          },
+          {
+            "text": "UNKNOWN",
+            "value": "UNKNOWN",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Open vulnerabilities by severity",
+      "description": "Vulnerabilities open in the latest main-branch scan of the selected images (pending). An image scanned by both GitHub and Jenkins is counted once.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"CRITICAL\"})))",
+          "legendFormat": "CRITICAL",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"HIGH\"})))",
+          "legendFormat": "HIGH",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"MEDIUM\"})))",
+          "legendFormat": "MEDIUM",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"LOW\"})))",
+          "legendFormat": "LOW",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"UNKNOWN\"})))",
+          "legendFormat": "UNKNOWN",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CRITICAL"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "HIGH"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MEDIUM"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "LOW"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "UNKNOWN"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Pending: fix available vs no fix yet",
+      "description": "Open vulnerabilities split by whether the vendor has released a fixed version.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",fix=\"available\"})))",
+          "legendFormat": "Fix available",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",fix=\"none\"})))",
+          "legendFormat": "No fix yet",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Fix available"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "No fix yet"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Pending vulnerabilities over time",
+      "description": "Open vulnerabilities in the latest main-branch scan, over time, by severity.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum by (severity) (max by (image, severity) (sum by (source, image, severity) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\"})))",
+          "legendFormat": "{{severity}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CRITICAL"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "HIGH"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MEDIUM"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "LOW"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "UNKNOWN"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Found vs resolved per day",
+      "description": "Found: vulnerabilities not in the previous scan of the same image. Resolved: in the previous scan, gone now. Main-branch scans only.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 8
+      },
+      "interval": "1d",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "round(sum(max by (image) (sum by (source, image) (increase(vuln_found_total{source=~\"$source\",image=~\"$image\",severity=~\"$severity\"}[$__interval])))))",
+          "legendFormat": "Found",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "interval": "1d"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "round(sum(max by (image) (sum by (source, image) (increase(vuln_resolved_total{source=~\"$source\",image=~\"$image\",severity=~\"$severity\"}[$__interval])))))",
+          "legendFormat": "Resolved",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "interval": "1d"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "barAlignment": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Found"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Resolved"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Scan results in selected range",
+      "description": "Scans that passed, were blocked by policy, or hit a tool error, in the chosen date range. Includes PR scans. The severity filter does not apply here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "round(sum(increase(scans_total{source=~\"$source\",image=~\"$image\",status=\"PASS\"}[$__range])))",
+          "legendFormat": "Passed",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "round(sum(increase(scans_total{source=~\"$source\",image=~\"$image\",status=\"FAIL\"}[$__range])))",
+          "legendFormat": "Blocked",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "round(sum(increase(scans_total{source=~\"$source\",image=~\"$image\",status=\"ERROR\"}[$__range])))",
+          "legendFormat": "Error",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Passed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Blocked"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Error"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Latest status per image",
+      "description": "Latest main-branch scan of each image. Open vulnerabilities follow the severity filter; the result itself does not.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 21,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "scan_last_result{source=~\"$source\",image=~\"$image\"}",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "scan_last_timestamp_seconds{source=~\"$source\",image=~\"$image\"} * 1000",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\"})",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "indexByName": {
+              "image": 0,
+              "source": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4
+            },
+            "renameByName": {
+              "image": "Image",
+              "source": "Source",
+              "Value #A": "Last result",
+              "Value #B": "Last scan",
+              "Value #C": "Open vulnerabilities"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last result"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "PASS",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "BLOCKED",
+                        "color": "red",
+                        "index": 1
+                      },
+                      "2": {
+                        "text": "ERROR",
+                        "color": "orange",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last scan"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Open vulnerabilities"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Image",
+            "desc": false
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Data sources",
+      "description": "Whether the exporter itself is up and whether its last fetch from GitHub and Jenkins worked. A broken source must never look like zero vulnerabilities.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "up{job=\"vuln-exporter\"}",
+          "legendFormat": "Exporter",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "exporter_source_up",
+          "legendFormat": "{{source}}",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "OK",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "NOT REACHABLE",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Data age",
+      "description": "Time since the exporter last fetched each source. It fetches every 5 minutes; more than 15 minutes means something is wrong.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vuln-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vuln-prometheus"
+          },
+          "expr": "time() - exporter_last_poll_timestamp_seconds",
+          "legendFormat": "{{source}}",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "showPercentChange": false,
+        "wideLayout": true
+      }
+    }
+  ]
+}

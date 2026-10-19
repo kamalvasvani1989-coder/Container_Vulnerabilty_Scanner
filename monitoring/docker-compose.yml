@@ -60,6 +60,9 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
     volumes:
       - grafana_data:/var/lib/grafana
+      # Datasource and dashboard come from files in Git (no manual clicking).
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3000:3000"
     networks: [monitoring]
