@@ -524,8 +524,13 @@ def backfill(sources, out_path, until, target_labels):
             family = name[:-len("_total")] if kind == "counter" else name
             f.write(f"# HELP {family} {help_text}\n# TYPE {family} {kind}\n")
             for (sname, labels), changes in series.items():
-                if sname != name or not any(v for _, v in changes):
-                    continue        # a series that was always 0 adds nothing
+                if sname != name:
+                    continue
+                # Skip a counter that was always 0: it adds nothing. Gauges are
+                # kept even at 0, because 0 is a real answer there (0 open LOW;
+                # last result 0 = PASS) and the dashboard shows it for past dates.
+                if kind == "counter" and not any(v for _, v in changes):
+                    continue
                 written_series += 1
                 idx = 0
                 for t in range(changes[0][0], last + 1, BACKFILL_STEP):

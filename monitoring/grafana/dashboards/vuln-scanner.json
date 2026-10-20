@@ -140,7 +140,7 @@
       "id": 1,
       "type": "stat",
       "title": "Open vulnerabilities by severity",
-      "description": "Vulnerabilities open in the latest main-branch scan of the selected images (pending). An image scanned by both GitHub and Jenkins is counted once.",
+      "description": "Vulnerabilities open at the end of the selected date range (now, if the range reaches today), from the latest main-branch scan of the selected images. An image scanned by both GitHub and Jenkins is counted once.",
       "datasource": {
         "type": "prometheus",
         "uid": "vuln-prometheus"
@@ -158,7 +158,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"CRITICAL\"})))",
+          "expr": "sum(max by (image) (sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"CRITICAL\"}[$__range]))))",
           "legendFormat": "CRITICAL",
           "range": false,
           "instant": true,
@@ -170,7 +170,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"HIGH\"})))",
+          "expr": "sum(max by (image) (sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"HIGH\"}[$__range]))))",
           "legendFormat": "HIGH",
           "range": false,
           "instant": true,
@@ -182,7 +182,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"MEDIUM\"})))",
+          "expr": "sum(max by (image) (sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"MEDIUM\"}[$__range]))))",
           "legendFormat": "MEDIUM",
           "range": false,
           "instant": true,
@@ -194,7 +194,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"LOW\"})))",
+          "expr": "sum(max by (image) (sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"LOW\"}[$__range]))))",
           "legendFormat": "LOW",
           "range": false,
           "instant": true,
@@ -206,7 +206,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"UNKNOWN\"})))",
+          "expr": "sum(max by (image) (sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",severity=\"UNKNOWN\"}[$__range]))))",
           "legendFormat": "UNKNOWN",
           "range": false,
           "instant": true,
@@ -330,7 +330,7 @@
       "id": 2,
       "type": "stat",
       "title": "Pending: fix available vs no fix yet",
-      "description": "Open vulnerabilities split by whether the vendor has released a fixed version.",
+      "description": "Open vulnerabilities at the end of the selected date range, split by whether the vendor has released a fixed version.",
       "datasource": {
         "type": "prometheus",
         "uid": "vuln-prometheus"
@@ -348,7 +348,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",fix=\"available\"})))",
+          "expr": "sum(max by (image) (sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",fix=\"available\"}[$__range]))))",
           "legendFormat": "Fix available",
           "range": false,
           "instant": true,
@@ -360,7 +360,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum(max by (image) (sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",fix=\"none\"})))",
+          "expr": "sum(max by (image) (sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\",fix=\"none\"}[$__range]))))",
           "legendFormat": "No fix yet",
           "range": false,
           "instant": true,
@@ -809,7 +809,7 @@
       "id": 6,
       "type": "table",
       "title": "Latest status per image",
-      "description": "Latest main-branch scan of each image. Open vulnerabilities follow the severity filter; the result itself does not.",
+      "description": "Latest main-branch scan of each image within the selected date range. Open vulnerabilities follow the severity filter; the result itself does not.",
       "datasource": {
         "type": "prometheus",
         "uid": "vuln-prometheus"
@@ -827,7 +827,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "scan_last_result{source=~\"$source\",image=~\"$image\"}",
+          "expr": "last_over_time(scan_last_result{source=~\"$source\",image=~\"$image\"}[$__range])",
           "legendFormat": "",
           "range": false,
           "instant": true,
@@ -839,7 +839,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "scan_last_timestamp_seconds{source=~\"$source\",image=~\"$image\"} * 1000",
+          "expr": "last_over_time(scan_last_timestamp_seconds{source=~\"$source\",image=~\"$image\"}[$__range]) * 1000",
           "legendFormat": "",
           "range": false,
           "instant": true,
@@ -851,7 +851,7 @@
             "type": "prometheus",
             "uid": "vuln-prometheus"
           },
-          "expr": "sum by (source, image) (vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\"})",
+          "expr": "sum by (source, image) (last_over_time(vuln_pending{source=~\"$source\",image=~\"$image\",severity=~\"$severity\"}[$__range]))",
           "legendFormat": "",
           "range": false,
           "instant": true,
@@ -979,7 +979,7 @@
       "id": 7,
       "type": "stat",
       "title": "Data sources",
-      "description": "Whether the exporter itself is up and whether its last fetch from GitHub and Jenkins worked. A broken source must never look like zero vulnerabilities.",
+      "description": "Always live (last 5 minutes), whatever date range is selected. Whether the exporter itself is up and whether its last fetch from GitHub and Jenkins worked. A broken source must never look like zero vulnerabilities, or like an old OK.",
       "datasource": {
         "type": "prometheus",
         "uid": "vuln-prometheus"
@@ -1067,13 +1067,15 @@
         "orientation": "auto",
         "showPercentChange": false,
         "wideLayout": true
-      }
+      },
+      "timeFrom": "5m",
+      "hideTimeOverride": false
     },
     {
       "id": 8,
       "type": "stat",
       "title": "Data age",
-      "description": "Time since the exporter last fetched each source. It fetches every 5 minutes; more than 15 minutes means something is wrong.",
+      "description": "Always live (last 5 minutes), whatever date range is selected. Time since the exporter last fetched each source. It fetches every 5 minutes; more than 15 minutes means something is wrong.",
       "datasource": {
         "type": "prometheus",
         "uid": "vuln-prometheus"
@@ -1141,7 +1143,9 @@
         "orientation": "auto",
         "showPercentChange": false,
         "wideLayout": true
-      }
+      },
+      "timeFrom": "5m",
+      "hideTimeOverride": false
     }
   ]
 }
