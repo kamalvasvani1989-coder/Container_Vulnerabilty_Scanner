@@ -158,6 +158,11 @@ def build_message(summary, mention_on=DEFAULT_MENTION_ON):
         shown = [s for s in SEVERITY_ORDER if s in counts]
         if shown:
             lines.append("All findings: " + ", ".join(f"{s} {counts[s]}" for s in shown))
+        # Sprint 5: say when approved exceptions explain the gap between
+        # "found" above and "All findings". Count only: no CVE IDs in Slack.
+        excepted = len(summary.get("excepted") or [])
+        if excepted:
+            lines.append(f"{excepted} excepted (approved), not counted. See the report.")
     else:
         headline = f":warning: Scan did not complete: {image}"
         lines = [

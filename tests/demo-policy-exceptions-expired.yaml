@@ -1,0 +1,44 @@
+# DEMO ONLY: Sprint 5 live test of exceptions in Jenkins (not the real policy).
+# Use with Jenkins "Build with Parameters":
+#   SCAN_IMAGE  = python:3.9-slim
+#   POLICY_FILE = tests/demo-policy-exceptions-expired.yaml
+# Gates on CRITICAL only, so the test isolates exceptions: python:3.9-slim
+# also has ~120 HIGHs, which would fail every build regardless.
+# CVE IDs are what Trivy reported for python:3.9-slim on 2026-10-22; the
+# Trivy database changes daily, so re-check them before re-running.
+# Expected result: FAIL (1 CRITICAL counted again) + Slack @channel alert
+
+thresholds:
+  CRITICAL: 0
+alerts:
+  mention_channel_on: [CRITICAL]
+exceptions:
+  # One entry without "package" covers the CVE in all three OpenSSL packages.
+  - id: CVE-2026-31789
+    image: python:3.9-slim
+    reason: Demo - OpenSSL update not yet in this base image
+    approved_by: Kamal Vasvani
+    approved_on: 2026-10-22
+    expires: 2026-12-31
+  - id: CVE-2026-13221
+    package: perl-base
+    image: python:3.9-slim
+    reason: Demo - expiring soon, shows the 7-day warning
+    approved_by: Kamal Vasvani
+    approved_on: 2026-10-22
+    expires: 2026-10-27
+  - id: CVE-2026-42496
+    package: perl-base
+    image: python:3.9-slim
+    reason: Demo - perl not used by the app
+    approved_by: Kamal Vasvani
+    approved_on: 2026-10-22
+    expires: 2026-12-31
+  # EXPIRED: no longer applies, so this CRITICAL counts again -> blocked.
+  - id: CVE-2026-8376
+    package: perl-base
+    image: python:3.9-slim
+    reason: Demo - approval ran out
+    approved_by: Kamal Vasvani
+    approved_on: 2026-07-01
+    expires: 2026-09-01
