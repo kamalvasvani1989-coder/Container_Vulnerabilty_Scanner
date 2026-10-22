@@ -5,6 +5,19 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Rescans (Sprint 5). New CVEs are published every day against images
+  # whose code has not changed, so a scan only on push goes stale.
+  #   schedule:          daily 02:30 UTC = 08:00 IST, an hour before the
+  #                      Monday weekly digest, so the digest sees it.
+  #   workflow_dispatch: "Run workflow" button for an on-demand rescan,
+  #                      e.g. right after an upstream fix is released.
+  # Each rescan REBUILDS the image, so patched base-image layers are
+  # picked up too, then applies the same policy, exceptions and alerts.
+  # A rescan that finds a new blocking CVE fails and alerts Slack exactly
+  # like a push would. Scheduled runs only ever run on main.
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
 
 jobs:
   scan:
