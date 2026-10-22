@@ -19,6 +19,19 @@ Both come from the SAME single scan, so the report and the gate decision
 can never disagree. Downstream tools (HTML report, Slack) read these files
 and never re-decide pass/fail themselves.
 
+Sprint 5 addition — exceptions (approved known vulnerabilities):
+  policy.yaml may list CVEs that are accepted for a limited time. Each one
+  needs a reason, an approver, an approval date and an expiry (at most
+  MAX_EXCEPTION_DAYS after approval). A matching CVE is still REPORTED
+  (it is still in the image) but does not count towards the gate.
+  - An expired exception stops applying, so the CVE gates again.
+  - A malformed exception is a config error (exit 2): a broken waiver
+    must never quietly pass a build.
+  scan-summary.json keeps 'counts' as everything found, and adds
+  'gated_counts' (what the gate judged), 'excepted' (each waived finding)
+  and 'exceptions' (state of every exception that applies to this image),
+  so exceptions can be tracked over time.
+
 Exit codes (CI/CD keys off these):
   0  PASS        — scan ran, policy satisfied
   1  POLICY FAIL — scan ran, too many vulnerabilities (block the build)
@@ -34,7 +47,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import yaml
 
@@ -52,7 +65,13 @@ STATUS_BY_EXIT = {
 DEFAULT_POLICY_PATH = "policy.yaml"
 REPORT_FILENAME = "trivy-report.json"
 SUMMARY_FILENAME = "scan-summary.json"
-SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_SCHEMA_VERSION = 2
+
+# Exceptions: the longest an approval may last, and when to start warning.
+MAX_EXCEPTION_DAYS = 90
+EXPIRING_SOON_DAYS = 7
+EXCEPTION_REQUIRED = ("id", "reason", "approved_by", "approved_on", "expires")
+EXCEPTION_OPTIONAL = ("package", "image")
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
 
@@ -186,6 +205,162 @@ def load_policy(path):
     return clean
 
 
+def load_policy_and_exceptions(path, today=None):
+    """
+    Load thresholds AND exceptions from the policy YAML.
+
+    Returns (thresholds, exceptions). Any problem in either is a config
+    error (RuntimeError -> exit 2).
+    """
+    thresholds = load_policy(path)
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+    exceptions = validate_exceptions(data.get("exceptions"), today or date.today())
+    return thresholds, exceptions
+
+
+# --- Exceptions (Sprint 5) --------------------------------------------------
+
+def _as_date(value, field, where):
+    """YAML turns 2026-10-20 into a date already; also accept the string."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value.strip())
+        except ValueError:
+            pass
+    raise RuntimeError(f"{where}: '{field}' must be a date like 2026-12-31, got {value!r}.")
+
+
+def validate_exceptions(raw, today):
+    """
+    Check every exception entry strictly and return a clean list.
+
+    Strict on purpose: an unknown key (e.g. a typo 'expiry') or a missing
+    approver must stop the pipeline, not silently waive a vulnerability.
+    Expired entries are VALID here; they simply stop applying later.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise RuntimeError("'exceptions' must be a list of entries (or left empty).")
+
+    clean = []
+    for n, entry in enumerate(raw, start=1):
+        where = f"Exception #{n}"
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"{where} must be a mapping with id, reason, approved_by, approved_on, expires.")
+        if entry.get("id"):
+            where = f"Exception #{n} ({entry.get('id')})"
+
+        unknown = set(entry) - set(EXCEPTION_REQUIRED) - set(EXCEPTION_OPTIONAL)
+        if unknown:
+            raise RuntimeError(f"{where}: unknown field(s) {', '.join(sorted(map(str, unknown)))}. "
+                               f"Allowed: {', '.join(EXCEPTION_REQUIRED + EXCEPTION_OPTIONAL)}.")
+        missing = [k for k in EXCEPTION_REQUIRED if entry.get(k) in (None, "")]
+        if missing:
+            raise RuntimeError(f"{where}: missing required field(s) {', '.join(missing)}.")
+
+        for k in ("id", "reason", "approved_by") + EXCEPTION_OPTIONAL:
+            if k in entry and entry[k] is not None and not isinstance(entry[k], str):
+                raise RuntimeError(f"{where}: '{k}' must be text, got {entry[k]!r}.")
+
+        approved_on = _as_date(entry["approved_on"], "approved_on", where)
+        expires = _as_date(entry["expires"], "expires", where)
+        if approved_on > today:
+            raise RuntimeError(f"{where}: approved_on {approved_on} is in the future.")
+        if expires < approved_on:
+            raise RuntimeError(f"{where}: expires {expires} is before approved_on {approved_on}.")
+        if (expires - approved_on).days > MAX_EXCEPTION_DAYS:
+            raise RuntimeError(f"{where}: lasts {(expires - approved_on).days} days; "
+                               f"the maximum is {MAX_EXCEPTION_DAYS}. Re-approve it when it runs out.")
+
+        clean.append({
+            "id": entry["id"].strip(),
+            "package": (entry.get("package") or "").strip() or None,
+            "image": (entry.get("image") or "").strip() or None,
+            "reason": entry["reason"].strip(),
+            "approved_by": entry["approved_by"].strip(),
+            "approved_on": approved_on,
+            "expires": expires,
+        })
+    return clean
+
+
+def image_repository(image):
+    """'python:3.9-slim' -> 'python'; 'reg:5000/app:1' -> 'reg:5000/app'."""
+    name = image.split("@", 1)[0]
+    last = name.rsplit("/", 1)[-1]
+    if ":" in last:
+        name = name[: len(name) - len(last)] + last.split(":", 1)[0]
+    return name
+
+
+def exception_applies_to_image(exc, image):
+    """
+    No image -> applies to every image. An image WITH a tag must match
+    exactly; WITHOUT a tag it matches any tag of that repository.
+    """
+    if not exc["image"]:
+        return True
+    if exc["image"] == image:
+        return True
+    has_tag = exc["image"] != image_repository(exc["image"]) or "@" in exc["image"]
+    return not has_tag and exc["image"] == image_repository(image)
+
+
+def apply_exceptions(vulns, exceptions, image, today):
+    """
+    Split findings into (gated, excepted) and describe each exception.
+
+    Returns (gated_vulns, excepted, states):
+      gated_vulns  findings the gate still judges
+      excepted     one record per waived finding (with its exception)
+      states       one record per exception that applies to this image:
+                   state active / expiring_soon / expired, and 'matched'
+                   (0 matched + not expired = no longer needed, e.g. patched)
+    """
+    in_scope = [e for e in exceptions if exception_applies_to_image(e, image)]
+    states = []
+    for e in in_scope:
+        days_left = (e["expires"] - today).days
+        if days_left < 0:
+            state = "expired"
+        elif days_left <= EXPIRING_SOON_DAYS:
+            state = "expiring_soon"
+        else:
+            state = "active"
+        states.append({**e, "days_left": days_left, "state": state, "matched": 0})
+
+    gated, excepted = [], []
+    for v in vulns:
+        hit = None
+        for st in states:
+            if st["id"] == v["id"] and (not st["package"] or st["package"] == v["package"]):
+                st["matched"] += 1
+                if st["state"] != "expired":
+                    hit = hit or st
+        if hit:
+            excepted.append({
+                **v,
+                "fix_available": bool(v["fixed"]),
+                "reason": hit["reason"],
+                "approved_by": hit["approved_by"],
+                "expires": hit["expires"].isoformat(),
+                "days_left": hit["days_left"],
+            })
+        else:
+            gated.append(v)
+
+    for st in states:
+        st["approved_on"] = st["approved_on"].isoformat()
+        st["expires"] = st["expires"].isoformat()
+    return gated, excepted, states
+
+
 # --- Job 3: apply the policy gate -------------------------------------------
 
 def apply_gate(counts, thresholds):
@@ -211,17 +386,39 @@ def apply_gate(counts, thresholds):
 
 # --- Job 4: report ----------------------------------------------------------
 
-def report(image, counts, thresholds, passed, breaches):
+def report(image, counts, thresholds, passed, breaches, gated_counts=None,
+           excepted=(), states=()):
     """Print a human-readable summary of the scan and the gate decision."""
+    gated_counts = counts if gated_counts is None else gated_counts
     print(f"\nScan results for: {image}")
     print("-" * 50)
 
     if counts:
         for sev in ordered_severities(counts):
             gated = " (gated)" if sev in thresholds else ""
-            print(f"  {sev:<9} {counts[sev]}{gated}")
+            waived = counts[sev] - gated_counts.get(sev, 0)
+            note = f"  [{waived} excepted]" if waived else ""
+            print(f"  {sev:<9} {counts[sev]}{gated}{note}")
     else:
         print("  No vulnerabilities found.")
+
+    if states:
+        print("-" * 50)
+        print("Exceptions for this image:")
+        for st in states:
+            pkg = f" ({st['package']})" if st["package"] else ""
+            if st["state"] == "expired":
+                what = f"EXPIRED on {st['expires']}, no longer applied"
+            elif st["state"] == "expiring_soon":
+                what = f"expires {st['expires']} ({st['days_left']} days left)"
+            else:
+                what = f"active until {st['expires']}"
+            used = (f"matched {st['matched']}" if st["matched"]
+                    else "matched nothing (patched? remove it)")
+            print(f"  {st['id']}{pkg}: {what}; {used}")
+        fixable = sorted({e["id"] for e in excepted if e["fix_available"]})
+        if fixable:
+            print(f"  Fix now available for excepted: {', '.join(fixable)}")
 
     print("-" * 50)
     if passed:
@@ -236,7 +433,8 @@ def report(image, counts, thresholds, passed, breaches):
 # --- Output files (Sprint 3) ------------------------------------------------
 
 def build_summary(image, exit_code, *, counts=None, thresholds=None,
-                  breaches=None, trivy_output=None, error=None):
+                  breaches=None, trivy_output=None, error=None,
+                  gated_counts=None, excepted=None, exception_states=None):
     """
     Build the scan-summary.json content.
 
@@ -245,6 +443,7 @@ def build_summary(image, exit_code, *, counts=None, thresholds=None,
     instead of re-applying the policy.
     """
     counts = counts or {}
+    gated = counts if gated_counts is None else gated_counts
     trivy_meta = (trivy_output or {}).get("Trivy") or {}
     return {
         "schema_version": SUMMARY_SCHEMA_VERSION,
@@ -255,8 +454,12 @@ def build_summary(image, exit_code, *, counts=None, thresholds=None,
         "trivy_version": trivy_meta.get("Version"),
         "total": sum(counts.values()),
         "counts": {sev: counts[sev] for sev in ordered_severities(counts)},
+        # What the gate judged: counts minus excepted findings.
+        "gated_counts": {sev: gated[sev] for sev in ordered_severities(gated)},
         "thresholds": thresholds,
         "breaches": breaches or [],
+        "excepted": excepted or [],
+        "exceptions": exception_states or [],
         "error": error,
     }
 
@@ -321,8 +524,9 @@ def main():
 
     # Load config first — a config error is a tool error, and there's no
     # point scanning if we can't evaluate the result.
+    today = date.today()
     try:
-        thresholds = load_policy(args.policy)
+        thresholds, exceptions = load_policy_and_exceptions(args.policy, today)
     except RuntimeError as exc:
         return fail_with_tool_error("CONFIG ERROR", exc, args.image, args.output_dir)
 
@@ -336,8 +540,11 @@ def main():
     # Parse, count, gate, report.
     vulns = parse_vulnerabilities(trivy_output)
     counts = count_by_severity(vulns)
-    passed, breaches = apply_gate(counts, thresholds)
-    report(args.image, counts, thresholds, passed, breaches)
+    gated_vulns, excepted, states = apply_exceptions(vulns, exceptions, args.image, today)
+    gated_counts = count_by_severity(gated_vulns)
+    passed, breaches = apply_gate(gated_counts, thresholds)
+    report(args.image, counts, thresholds, passed, breaches,
+           gated_counts, excepted, states)
     exit_code = EXIT_PASS if passed else EXIT_POLICY_FAIL
 
     # Write artifacts last, from the same scan the gate just judged.
@@ -346,6 +553,8 @@ def main():
             args.image, exit_code,
             counts=counts, thresholds=thresholds,
             breaches=breaches, trivy_output=trivy_output,
+            gated_counts=gated_counts, excepted=excepted,
+            exception_states=states,
         )
         try:
             write_outputs(args.output_dir, summary, raw_report)
