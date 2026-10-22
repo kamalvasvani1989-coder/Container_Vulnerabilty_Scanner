@@ -40,8 +40,12 @@ jobs:
       # behaviour on its own when Trivy releases. Bump deliberately.
       # Retry (Sprint 5): the install downloads from GitHub on every run,
       # the likeliest place for a network blip. Up to 3 tries, then fail.
+      # pipefail: GitHub runs this with plain `bash -e`, which only checks
+      # the LAST command of a pipe. Without it, a failed curl would feed
+      # `sh` an empty script that "succeeds", and the retry would not run.
       - name: Install Trivy
         run: |
+          set -o pipefail
           for attempt in 1 2 3; do
             if curl -sfL --retry 3 https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
                  | sudo sh -s -- -b /usr/local/bin v0.76.0; then
