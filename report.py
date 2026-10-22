@@ -70,7 +70,19 @@ def build_context(summary, trivy_output):
 
     thresholds = summary.get("thresholds") or {}
     counts = summary.get("counts") or {}
+    # Sprint 5: what the gate counted after exceptions. Older summaries
+    # (schema 1) have no gated_counts, so everything counted.
+    gated_counts = summary.get("gated_counts", counts) or {}
     breached = {b["severity"] for b in summary.get("breaches") or []}
+
+    # Exceptions (Sprint 5). Mark waived findings in the full list, by
+    # vulnerability ID + package, exactly as the scanner matched them.
+    excepted = summary.get("excepted") or []
+    waived = {(e["id"], e["package"]): e for e in excepted}
+    for v in vulns:
+        v["exception"] = waived.get((v["id"], v["package"]))
+    exceptions = sorted(summary.get("exceptions") or [],
+                        key=lambda e: (e.get("expires", ""), e.get("id", "")))
 
     # One row per severity in a fixed order, so the counts block always
     # has the same shape (zeros included) from report to report.
@@ -80,6 +92,7 @@ def build_context(summary, trivy_output):
         {
             "name": sev,
             "count": counts.get(sev, 0),
+            "excepted": counts.get(sev, 0) - gated_counts.get(sev, 0),
             "limit": thresholds.get(sev),
             "gated": sev in thresholds,
             "breached": sev in breached,
@@ -92,6 +105,12 @@ def build_context(summary, trivy_output):
         "severity_rows": severity_rows,
         "vulns": vulns,
         "fixable": sum(1 for v in vulns if v["fixed"]),
+        "exceptions": exceptions,
+        "excepted_count": len(excepted),
+        "excepted_fixable": sorted({e["id"] for e in excepted if e.get("fix_available")}),
+        # Show the exception columns only when this image has exceptions,
+        # so reports without any look exactly as before.
+        "has_exceptions": bool(exceptions),
     }
 
 
