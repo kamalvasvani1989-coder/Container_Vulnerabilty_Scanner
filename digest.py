@@ -7,6 +7,11 @@ N days (default 7) and posts one summary message to Slack: how many scans
 ran, how many passed, were blocked or errored, which images were blocked
 and why, and the latest result on the main branch.
 
+Sprint 5: also how the exceptions (approved known vulnerabilities) stand
+on the latest main scan: how many are active, expiring soon, expired,
+no longer matched (e.g. patched), and how many now have a fix. Counts
+only, in line with the no-CVE-details rule; the report has the details.
+
 No database is needed: GitHub already keeps each run's trivy-scan-report
 artifact, so this reads the history straight from there. That keeps the
 running cost at zero.
@@ -151,6 +156,33 @@ def collect(github, workflow, since):
     return records
 
 
+def exceptions_line(summary):
+    """
+    One line on the exceptions in a scan summary, counts only.
+    None for older summaries (schema 1) that predate exceptions.
+    """
+    if "exceptions" not in summary:
+        return None
+    exceptions = summary.get("exceptions") or []
+    if not exceptions:
+        return "*Exceptions:* none"
+    expired = sum(e.get("state") == "expired" for e in exceptions)
+    unused = sum(e.get("state") != "expired" and not e.get("matched") for e in exceptions)
+    soon = sum(e.get("state") == "expiring_soon" and e.get("matched") for e in exceptions)
+    active = len(exceptions) - expired - unused - soon
+    fixable = len({e.get("id") for e in summary.get("excepted") or [] if e.get("fix_available")})
+    parts = [f"{active} active"]
+    if soon:
+        parts.append(f":hourglass: {soon} expiring within 7 days")
+    if expired:
+        parts.append(f":no_entry: {expired} expired")
+    if unused:
+        parts.append(f"{unused} no longer found (remove?)")
+    if fixable:
+        parts.append(f":wrench: fix now available for {fixable}")
+    return "*Exceptions:* " + ", ".join(parts) + ". Details in the latest scan report."
+
+
 def build_digest(records, days, since, now):
     period = f"{since:%d %b} – {now:%d %b %Y}"
     label = "Daily" if days == 1 else ("Weekly" if days == 7 else f"{days}-day")
@@ -182,6 +214,10 @@ def build_digest(records, days, since, now):
         crit, high = counts.get("CRITICAL", 0), counts.get("HIGH", 0)
         lines.append(f"*Latest on main:* {latest.get('status')} "
                      f"(CRITICAL {crit}, HIGH {high})")
+
+        exc_line = exceptions_line(latest)
+        if exc_line:
+            lines.append(exc_line)
 
     blocked = [r for r in records if r["status"] == "FAIL" and r["summary"]]
     if blocked:

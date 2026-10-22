@@ -1,4 +1,4 @@
-{# Sprint 3 scan report. Self-contained: no external fonts, scripts or
+{# Sprint 3 scan report (Sprint 5: exceptions section and markers). Self-contained: no external fonts, scripts or
    images, so it opens offline from a CI artifact and renders the same
    way in WeasyPrint for the PDF step. #}
 {% set s = summary %}
@@ -95,6 +95,18 @@
   .sev-UNKNOWN  { color: var(--sev-unknown); }
   .nofix { color: var(--muted); }
 
+  /* Sprint 5: exceptions */
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 12px; font-weight: 600; white-space: nowrap;
+  }
+  .tag-active        { background: var(--tint);     color: var(--ink); border: 1px solid var(--rule); }
+  .tag-expiring_soon { background: var(--error-bg); color: var(--error); }
+  .tag-expired       { background: var(--fail-bg);  color: var(--fail); }
+  .tag-unused        { background: var(--tint);     color: var(--muted); border: 1px solid var(--rule); }
+  tr.waived td { color: var(--muted); }
+  tr.waived td.sev { opacity: 0.7; }
+
   footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--rule); padding-top: 12px; }
 
   @media print {
@@ -153,13 +165,17 @@
   <div class="table-wrap">
   <table class="counts">
     <thead>
-      <tr><th>Severity</th><th class="num">Found</th><th class="num">Limit</th><th>Result</th></tr>
+      <tr><th>Severity</th><th class="num">Found</th>{% if has_exceptions %}<th class="num">Excepted</th><th class="num">Counted</th>{% endif %}<th class="num">Limit</th><th>Result</th></tr>
     </thead>
     <tbody>
     {% for row in severity_rows %}
       <tr class="{{ 'breached' if row.breached }}">
         <td class="sev sev-{{ row.name }}">{{ row.name }}</td>
         <td class="num">{{ row.count }}</td>
+        {% if has_exceptions %}
+        <td class="num">{{ row.excepted if row.excepted else "–" }}</td>
+        <td class="num">{{ row.count - row.excepted }}</td>
+        {% endif %}
         <td class="num">{{ row.limit if row.gated else "–" }}</td>
         <td>
           {% if not row.gated %}<span class="result-none">Not gated</span>
@@ -173,23 +189,60 @@
   </div>
 </section>
 
+{% if has_exceptions %}
 <section>
-  <h3>Vulnerabilities ({{ vulns | length }})</h3>
-  {% if vulns %}
-  <p class="note">{{ fixable }} of {{ vulns | length }} have a fixed version available. Most severe first.</p>
+  <h3>Exceptions for this image ({{ exceptions | length }})</h3>
+  <p class="note">Approved known vulnerabilities from the policy file. Excepted findings are still listed below but do not count towards the limits. An expired exception no longer applies.</p>
   <div class="table-wrap">
   <table>
     <thead>
-      <tr><th>CVE</th><th>Severity</th><th>Package</th><th>Installed</th><th>Fixed in</th></tr>
+      <tr><th>CVE</th><th>Package</th><th>State</th><th>Expires</th><th class="num">Matched</th><th>Approved</th><th>Reason</th></tr>
+    </thead>
+    <tbody>
+    {% for e in exceptions %}
+      {% set unused = e.matched == 0 and e.state != "expired" %}
+      <tr>
+        <td class="mono cve">{{ e.id }}</td>
+        <td class="mono">{{ e.package or "any" }}</td>
+        <td>
+          {% if e.state == "expired" %}<span class="tag tag-expired">Expired{{ ", counted again" if e.matched }}</span>
+          {% elif unused %}<span class="tag tag-unused">Not found: remove?</span>
+          {% elif e.state == "expiring_soon" %}<span class="tag tag-expiring_soon">Expires in {{ e.days_left }} day{{ "s" if e.days_left != 1 }}</span>
+          {% else %}<span class="tag tag-active">Active</span>{% endif %}
+        </td>
+        <td class="mono">{{ e.expires }}</td>
+        <td class="num">{{ e.matched }}</td>
+        <td>{{ e.approved_by }}, {{ e.approved_on }}</td>
+        <td>{{ e.reason }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if excepted_fixable %}
+  <p class="note" style="margin-top:10px">A fix is now available for: <strong>{{ excepted_fixable | join(", ") }}</strong>. Patch instead of renewing the exception.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section>
+  <h3>Vulnerabilities ({{ vulns | length }})</h3>
+  {% if vulns %}
+  <p class="note">{{ fixable }} of {{ vulns | length }} have a fixed version available. Most severe first.{% if excepted_count %} {{ excepted_count }} excepted (shown greyed out).{% endif %}</p>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>CVE</th><th>Severity</th><th>Package</th><th>Installed</th><th>Fixed in</th>{% if excepted_count %}<th>Exception</th>{% endif %}</tr>
     </thead>
     <tbody>
     {% for v in vulns %}
-      <tr>
+      <tr class="{{ 'waived' if v.exception }}">
         <td class="mono cve">{{ v.id }}</td>
         <td class="sev sev-{{ v.severity }}">{{ v.severity }}</td>
         <td class="mono">{{ v.package }}</td>
         <td class="mono">{{ v.installed }}</td>
         <td class="mono">{% if v.fixed %}{{ v.fixed }}{% else %}<span class="nofix">No fix yet</span>{% endif %}</td>
+        {% if excepted_count %}<td>{% if v.exception %}<span class="tag tag-active">Until {{ v.exception.expires }}</span>{% endif %}</td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>
