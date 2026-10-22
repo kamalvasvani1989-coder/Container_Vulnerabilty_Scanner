@@ -25,10 +25,10 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.11"
 
@@ -39,10 +39,10 @@ jobs:
           sudo apt-get install -y libpango-1.0-0 libpangoft2-1.0-0
 
       - name: Install Python dependencies
-        run: pip install pyyaml jinja2 weasyprint
+        run: pip install -r requirements.txt
 
       - name: Cache Trivy database
-        uses: actions/cache@v4
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ github.run_id }}
@@ -116,7 +116,7 @@ jobs:
       # exist, so a missing file is a warning, not a second failure.
       - name: Upload scan report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: trivy-scan-report
           path: reports/
