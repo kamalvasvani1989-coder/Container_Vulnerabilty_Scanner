@@ -12,6 +12,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import digest  # noqa: E402
+import notify  # noqa: E402
 import report  # noqa: E402
 
 TRIVY = {"Results": [{"Vulnerabilities": [
@@ -80,6 +81,22 @@ class DigestTests(unittest.TestCase):
     def test_none_and_old_summaries(self):
         self.assertEqual(digest.exceptions_line(dict(SUMMARY_V2, exceptions=[])), "*Exceptions:* none")
         self.assertIsNone(digest.exceptions_line(SUMMARY_V1))
+
+
+class SlackAlertTests(unittest.TestCase):
+    def alert_text(self, summary):
+        payload = notify.build_message(summary, ["CRITICAL"])
+        return "\n".join(b["text"]["text"] for b in payload["blocks"])
+
+    def test_blocked_alert_mentions_exceptions_count_only(self):
+        s = dict(SUMMARY_V2, status="FAIL", exit_code=1,
+                 breaches=[{"severity": "HIGH", "found": 11, "limit": 10}])
+        text = self.alert_text(s)
+        self.assertIn("1 excepted (approved), not counted", text)
+        self.assertNotIn("CVE-", text)   # Slack carries no CVE details
+
+    def test_no_line_without_exceptions(self):
+        self.assertNotIn("excepted", self.alert_text(SUMMARY_V1))
 
 
 if __name__ == "__main__":
