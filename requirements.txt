@@ -1,0 +1,8 @@
+# Python packages used by the scanner, reports and notifications.
+# Pinned to the versions tested locally (Python 3.14), on GitHub Actions
+# (Python 3.11) and in the Jenkins image. All three need Python 3.10+.
+# WeasyPrint (PDF reports) also needs Pango from the OS:
+#   apt install libpango-1.0-0 libpangoft2-1.0-0
+PyYAML==6.0.3
+Jinja2==3.1.6
+weasyprint==70.0

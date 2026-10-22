@@ -1,0 +1,7 @@
+# Line endings: store all text files in the repo with LF (Unix) endings,
+# whatever the editor or OS used. Prevents CRLF creeping in from Windows.
+* text=auto eol=lf
+
+# Binary files: never convert or diff these.
+*.png binary
+*.pdf binary
