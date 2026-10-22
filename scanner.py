@@ -32,6 +32,13 @@ Sprint 5 addition — exceptions (approved known vulnerabilities):
   and 'exceptions' (state of every exception that applies to this image),
   so exceptions can be tracked over time.
 
+Sprint 5 addition — retry and error handling:
+  A Trivy failure is often temporary (vulnerability DB download, registry
+  or network hiccup), so Trivy is tried up to TRIVY_ATTEMPTS times, waiting
+  longer each time, with a time limit per attempt. Only if every attempt
+  fails is it a TOOL ERROR (exit 2), exactly as before. scan-summary.json
+  records how many attempts it took, so flaky runs are visible.
+
 Exit codes (CI/CD keys off these):
   0  PASS        — scan ran, policy satisfied
   1  POLICY FAIL — scan ran, too many vulnerabilities (block the build)
@@ -47,6 +54,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import date, datetime, timezone
 
 import yaml
@@ -75,18 +83,28 @@ EXCEPTION_OPTIONAL = ("package", "image")
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
 
+# Retry (Sprint 5). Worst case: 3 x 5 min + 1 min of waiting = 16 min,
+# inside the Jenkins job's 20-minute limit. A normal scan takes ~1 minute.
+TRIVY_ATTEMPTS = 3
+TRIVY_RETRY_WAITS = (15, 45)        # seconds before attempt 2 and 3
+TRIVY_TIMEOUT_SECONDS = 300
+
+
+class TrivyError(RuntimeError):
+    """Trivy could not produce a usable result; carries the attempt count."""
+    def __init__(self, message, attempts):
+        super().__init__(message)
+        self.attempts = attempts
+
 
 # --- Job 1: run Trivy -------------------------------------------------------
 
-def run_trivy(image):
+def run_trivy_once(image, timeout=TRIVY_TIMEOUT_SECONDS):
     """
-    Run Trivy against an image.
+    One Trivy run. Returns (raw_json_text, parsed_dict).
 
-    Returns (raw_json_text, parsed_dict). The raw text is kept so it can be
-    saved untouched as the report artifact.
-
-    Raises RuntimeError on any tool-level failure (Trivy missing, image
-    not found, bad output). The caller turns that into exit code 2.
+    Raises FileNotFoundError if Trivy isn't installed (no point retrying)
+    and RuntimeError for anything that may be temporary.
 
     Note: we do NOT use Trivy's own --exit-code flag. We want Trivy to
     exit 0 whenever the *scan itself* succeeds, regardless of what it
@@ -105,12 +123,10 @@ def run_trivy(image):
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout,
         )
-    except FileNotFoundError:
-        raise RuntimeError(
-            "Trivy is not installed or not on PATH. "
-            "Install it (see the setup guide) and try again."
-        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Trivy did not finish within {timeout} seconds.")
 
     if completed.returncode != 0:
         # Trivy ran but failed — e.g. image not found, network error.
@@ -123,6 +139,50 @@ def run_trivy(image):
         return completed.stdout, json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"Could not parse Trivy JSON output: {exc}")
+
+
+def run_trivy(image, attempts=None, waits=None, timeout=None, sleep=None):
+    """
+    Run Trivy, retrying temporary failures.
+
+    Returns (raw_json_text, parsed_dict, attempts_used).
+    Raises TrivyError (a RuntimeError) once every attempt has failed, or at
+    once if Trivy is not installed. The caller turns that into exit code 2.
+
+    Every failure is retried, including permanent ones such as a mistyped
+    image name: telling them apart from Trivy's messages is unreliable, and
+    a wrong "not temporary" guess would skip a retry that could have worked.
+    The cost of retrying a permanent error is about a minute.
+    """
+    # Defaults are read at call time, so tests can shorten the waits.
+    attempts = attempts or TRIVY_ATTEMPTS
+    waits = TRIVY_RETRY_WAITS if waits is None else waits
+    timeout = timeout or TRIVY_TIMEOUT_SECONDS
+    sleep = sleep or time.sleep
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            raw, parsed = run_trivy_once(image, timeout)
+            if attempt > 1:
+                print(f"Trivy succeeded on attempt {attempt} of {attempts}.")
+            return raw, parsed, attempt
+        except FileNotFoundError:
+            raise TrivyError(
+                "Trivy is not installed or not on PATH. "
+                "Install it (see the setup guide) and try again.",
+                attempt,
+            )
+        except RuntimeError as exc:
+            last_error = exc
+            if attempt < attempts:
+                wait = waits[min(attempt - 1, len(waits) - 1)]
+                # Headline plus Trivy's last error line: that's the reason.
+                lines = [l.strip() for l in str(exc).splitlines() if l.strip()]
+                brief = lines[0] + (f" {lines[-1][:200]}" if len(lines) > 1 else "")
+                print(f"WARNING: Trivy attempt {attempt} of {attempts} failed: "
+                      f"{brief} Retrying in {wait}s.", file=sys.stderr)
+                sleep(wait)
+    raise TrivyError(f"{last_error}\n(gave up after {attempts} attempts)", attempts)
 
 
 # --- Job 2: parse -----------------------------------------------------------
@@ -434,7 +494,8 @@ def report(image, counts, thresholds, passed, breaches, gated_counts=None,
 
 def build_summary(image, exit_code, *, counts=None, thresholds=None,
                   breaches=None, trivy_output=None, error=None,
-                  gated_counts=None, excepted=None, exception_states=None):
+                  gated_counts=None, excepted=None, exception_states=None,
+                  attempts=None):
     """
     Build the scan-summary.json content.
 
@@ -452,6 +513,8 @@ def build_summary(image, exit_code, *, counts=None, thresholds=None,
         "status": STATUS_BY_EXIT[exit_code],
         "exit_code": exit_code,
         "trivy_version": trivy_meta.get("Version"),
+        # How many Trivy runs it took (Sprint 5); None = Trivy never ran.
+        "attempts": attempts,
         "total": sum(counts.values()),
         "counts": {sev: counts[sev] for sev in ordered_severities(counts)},
         # What the gate judged: counts minus excepted findings.
@@ -485,7 +548,8 @@ def write_outputs(output_dir, summary, raw_report=None):
         raise RuntimeError(f"Could not write output files to {output_dir}: {exc}")
 
 
-def fail_with_tool_error(label, exc, image, output_dir, thresholds=None):
+def fail_with_tool_error(label, exc, image, output_dir, thresholds=None,
+                         attempts=None):
     """
     Print a tool error, try to leave an ERROR summary behind (so Slack
     can still say "the scanner broke" later), and return exit code 2.
@@ -493,7 +557,8 @@ def fail_with_tool_error(label, exc, image, output_dir, thresholds=None):
     print(f"{label}: {exc}", file=sys.stderr)
     if output_dir:
         summary = build_summary(image, EXIT_TOOL_ERROR,
-                                thresholds=thresholds, error=str(exc))
+                                thresholds=thresholds, error=str(exc),
+                                attempts=attempts)
         try:
             write_outputs(output_dir, summary)
         except RuntimeError as write_exc:
@@ -532,10 +597,10 @@ def main():
 
     # Run the scan.
     try:
-        raw_report, trivy_output = run_trivy(args.image)
-    except RuntimeError as exc:
+        raw_report, trivy_output, attempts = run_trivy(args.image)
+    except TrivyError as exc:
         return fail_with_tool_error("TOOL ERROR", exc, args.image,
-                                    args.output_dir, thresholds)
+                                    args.output_dir, thresholds, exc.attempts)
 
     # Parse, count, gate, report.
     vulns = parse_vulnerabilities(trivy_output)
@@ -554,7 +619,7 @@ def main():
             counts=counts, thresholds=thresholds,
             breaches=breaches, trivy_output=trivy_output,
             gated_counts=gated_counts, excepted=excepted,
-            exception_states=states,
+            exception_states=states, attempts=attempts,
         )
         try:
             write_outputs(args.output_dir, summary, raw_report)

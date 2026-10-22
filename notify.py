@@ -22,6 +22,9 @@ failing, so the pipeline still works before Slack is configured.
 Like report.py, this never re-decides pass/fail. The verdict comes from
 scan-summary.json only.
 
+Sprint 5: temporary Slack problems (network, 429, 5xx) are retried up
+to 3 times; a 4xx is not, because a bad webhook won't fix itself.
+
 The message carries the verdict and counts only. It deliberately contains
 no links: the full HTML/PDF reports stay in the GitHub Actions artifact,
 behind repository access, and never get posted into the channel.
@@ -40,6 +43,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -188,12 +192,24 @@ def build_message(summary, mention_on=DEFAULT_MENTION_ON):
     return {"text": text, "blocks": blocks}
 
 
-def post_to_slack(webhook_url, payload):
-    """POST the payload. Raises RuntimeError without ever echoing the URL."""
-    # Check the scheme ourselves: urllib's own errors quote the full URL,
-    # which would leak the secret into the CI log.
-    if not webhook_url.startswith("https://"):
-        raise RuntimeError("SLACK_WEBHOOK_URL must be an https:// Slack webhook URL.")
+# Retry (Sprint 5): a missed alert is the costly failure, so temporary
+# problems are retried. A 4xx (bad or revoked webhook, bad message) is not:
+# it won't fix itself, and retrying would only delay the error.
+SLACK_ATTEMPTS = 3
+SLACK_RETRY_WAITS = (5, 15)          # seconds before attempt 2 and 3
+MAX_RETRY_AFTER_SECONDS = 30
+
+
+class SlackError(RuntimeError):
+    """A failed post. 'retryable' says whether trying again could help."""
+    def __init__(self, message, retryable, retry_after=None):
+        super().__init__(message)
+        self.retryable = retryable
+        self.retry_after = retry_after
+
+
+def post_to_slack_once(webhook_url, payload):
+    """One POST. Raises SlackError without ever echoing the URL."""
     try:
         request = urllib.request.Request(
             webhook_url,
@@ -204,17 +220,56 @@ def post_to_slack(webhook_url, payload):
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
             body = response.read().decode("utf-8", errors="replace").strip()
             if response.status != 200 or body != "ok":
-                raise RuntimeError(f"Slack replied {response.status}: {body}")
+                raise SlackError(f"Slack replied {response.status}: {body}", retryable=False)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"Slack rejected the message ({exc.code}): {detail}")
+        message = f"Slack rejected the message ({exc.code}): {detail}"
+        if exc.code == 429:                 # rate limited: wait as told
+            try:
+                retry_after = int(exc.headers.get("Retry-After", ""))
+            except ValueError:
+                retry_after = None
+            raise SlackError(message, retryable=True, retry_after=retry_after)
+        raise SlackError(message, retryable=exc.code >= 500)
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach Slack: {exc.reason}")
+        raise SlackError(f"Could not reach Slack: {exc.reason}", retryable=True)
     except ValueError:
-        raise RuntimeError("SLACK_WEBHOOK_URL is not a valid URL.")
+        raise SlackError("SLACK_WEBHOOK_URL is not a valid URL.", retryable=False)
     except OSError as exc:
         # Timeouts and other socket errors; str(exc) here never includes the URL.
-        raise RuntimeError(f"Could not reach Slack: {exc}")
+        raise SlackError(f"Could not reach Slack: {exc}", retryable=True)
+
+
+def post_to_slack(webhook_url, payload, attempts=None, waits=None, sleep=None):
+    """
+    POST the payload, retrying temporary failures (network errors, 429,
+    5xx). Raises RuntimeError once it gives up, without echoing the URL.
+    """
+    # Check the scheme ourselves: urllib's own errors quote the full URL,
+    # which would leak the secret into the CI log.
+    if not webhook_url.startswith("https://"):
+        raise RuntimeError("SLACK_WEBHOOK_URL must be an https:// Slack webhook URL.")
+    # Defaults are read at call time, so tests can shorten the waits.
+    attempts = attempts or SLACK_ATTEMPTS
+    waits = SLACK_RETRY_WAITS if waits is None else waits
+    sleep = sleep or time.sleep
+    for attempt in range(1, attempts + 1):
+        try:
+            post_to_slack_once(webhook_url, payload)
+            if attempt > 1:
+                print(f"Slack accepted the message on attempt {attempt} of {attempts}.")
+            return
+        except SlackError as exc:
+            if not exc.retryable:
+                raise RuntimeError(str(exc))
+            if attempt == attempts:
+                raise RuntimeError(f"{exc} (gave up after {attempts} attempts)")
+            wait = waits[min(attempt - 1, len(waits) - 1)]
+            if exc.retry_after is not None:
+                wait = min(max(exc.retry_after, 1), MAX_RETRY_AFTER_SECONDS)
+            print(f"WARNING: Slack attempt {attempt} of {attempts} failed ({exc}); "
+                  f"retrying in {wait}s.", file=sys.stderr)
+            sleep(wait)
 
 
 def main():

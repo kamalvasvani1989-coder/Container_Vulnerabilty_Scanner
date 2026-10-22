@@ -38,15 +38,38 @@ jobs:
 
       # Pinned to the version tested locally, so CI doesn't change
       # behaviour on its own when Trivy releases. Bump deliberately.
+      # Retry (Sprint 5): the install downloads from GitHub on every run,
+      # the likeliest place for a network blip. Up to 3 tries, then fail.
       - name: Install Trivy
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin v0.76.0
+          for attempt in 1 2 3; do
+            if curl -sfL --retry 3 https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+                 | sudo sh -s -- -b /usr/local/bin v0.76.0; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::Trivy install failed after 3 attempts."; exit 1
+            fi
+            echo "::warning::Trivy install attempt $attempt failed; retrying in 15s."
+            sleep 15
+          done
+          trivy --version
 
+      # Retry (Sprint 5): pulling the base image from Docker Hub can fail
+      # briefly. A real Dockerfile error fails all 3 tries, as it should.
       - name: Build image
-        run: docker build -t vuln-scanner-test:ci .
+        run: |
+          for attempt in 1 2 3; do
+            if docker build -t vuln-scanner-test:ci .; then break; fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::Image build failed after 3 attempts."; exit 1
+            fi
+            echo "::warning::Image build attempt $attempt failed; retrying in 15s."
+            sleep 15
+          done
 
-      # The gate — and now the ONLY scan. scanner.py writes Trivy's raw
+      # The gate — and now the ONLY scan. scanner.py retries Trivy itself
+      # (3 attempts, Sprint 5), so this step has no retry of its own. scanner.py writes Trivy's raw
       # JSON (trivy-report.json) and its own verdict (scan-summary.json)
       # into reports/, from the same scan it judges.
       # Exit 1 (policy fail) or 2 (tool error) fails the build.

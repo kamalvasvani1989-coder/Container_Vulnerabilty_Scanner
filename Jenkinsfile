@@ -72,7 +72,12 @@ pipeline {
         stage('Build image') {
             when { expression { !params.SCAN_IMAGE?.trim() } }
             steps {
-                sh 'docker build -t "$LOCAL_IMAGE" .'
+                // Retry (Sprint 5): a base-image pull can fail briefly.
+                // A real Dockerfile error fails all 3 tries, as it should.
+                // Trivy itself is retried inside scanner.py.
+                retry(3) {
+                    sh 'docker build -t "$LOCAL_IMAGE" .'
+                }
             }
         }
 
