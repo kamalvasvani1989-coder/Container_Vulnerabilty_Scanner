@@ -8,6 +8,7 @@ Run from the repo root:   python -m unittest discover -s tests -v
 import os
 import sys
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
@@ -83,10 +84,56 @@ class DigestTests(unittest.TestCase):
         self.assertIsNone(digest.exceptions_line(SUMMARY_V1))
 
 
+class DigestLatestOnMainTests(unittest.TestCase):
+    """Sprint 6: a manual scan of another image must not become 'Latest on main'."""
+
+    def record(self, when, image, status):
+        summary = dict(SUMMARY_V2, image=image, status=status, exceptions=[])
+        return {"when": when, "branch": "main", "event": "workflow_dispatch",
+                "status": status, "summary": summary}
+
+    def text(self, records):
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 25, tzinfo=timezone.utc)
+        payload = digest.build_digest(records, 7, now, now)
+        return payload["blocks"][1]["text"]["text"]
+
+    def test_other_image_does_not_replace_latest_on_main(self):
+        text = self.text([self.record("2026-10-24T08:00:00Z", "vuln-scanner-test:ci", "PASS"),
+                          self.record("2026-10-25T08:00:00Z", "python:3.9-slim", "FAIL")])
+        self.assertIn("*Latest on main:* PASS", text)
+        self.assertIn("python:3.9-slim", text)          # still listed as blocked
+
+    def test_no_repo_image_scan_means_no_latest_line(self):
+        text = self.text([self.record("2026-10-25T08:00:00Z", "python:3.9-slim", "FAIL")])
+        self.assertNotIn("Latest on main", text)
+
+    def test_is_repo_image(self):
+        self.assertTrue(digest.is_repo_image("vuln-scanner-test:ci"))
+        self.assertTrue(digest.is_repo_image("vuln-scanner-test:jenkins-12"))
+        self.assertFalse(digest.is_repo_image("python:3.9-slim"))
+        self.assertFalse(digest.is_repo_image(None))
+
+
 class SlackAlertTests(unittest.TestCase):
+    # notify.py adds a Branch/Commit context block when GitHub's variables
+    # (GITHUB_SHA, GITHUB_REF_NAME, ...) are set, as they are on a GitHub
+    # Actions runner. Clear them so the message is the same everywhere.
+    def build(self, summary, env=None):
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GITHUB_")}
+        clean.update(env or {})
+        with mock.patch.dict(os.environ, clean, clear=True):
+            return notify.build_message(summary, ["CRITICAL"])
+
     def alert_text(self, summary):
-        payload = notify.build_message(summary, ["CRITICAL"])
+        payload = self.build(summary)
         return "\n".join(b["text"]["text"] for b in payload["blocks"])
+
+    def test_branch_and_commit_footer_on_github(self):
+        payload = self.build(SUMMARY_V1, {"GITHUB_REF_NAME": "main", "GITHUB_SHA": "abcdef1234"})
+        footer = payload["blocks"][-1]
+        self.assertEqual(footer["type"], "context")
+        self.assertIn("abcdef1", footer["elements"][0]["text"])
 
     def test_blocked_alert_mentions_exceptions_count_only(self):
         s = dict(SUMMARY_V2, status="FAIL", exit_code=1,
