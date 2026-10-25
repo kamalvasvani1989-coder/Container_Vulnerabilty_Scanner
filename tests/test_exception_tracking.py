@@ -8,6 +8,7 @@ Run from the repo root:   python -m unittest discover -s tests -v
 import os
 import sys
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
@@ -115,9 +116,24 @@ class DigestLatestOnMainTests(unittest.TestCase):
 
 
 class SlackAlertTests(unittest.TestCase):
+    # notify.py adds a Branch/Commit context block when GitHub's variables
+    # (GITHUB_SHA, GITHUB_REF_NAME, ...) are set, as they are on a GitHub
+    # Actions runner. Clear them so the message is the same everywhere.
+    def build(self, summary, env=None):
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GITHUB_")}
+        clean.update(env or {})
+        with mock.patch.dict(os.environ, clean, clear=True):
+            return notify.build_message(summary, ["CRITICAL"])
+
     def alert_text(self, summary):
-        payload = notify.build_message(summary, ["CRITICAL"])
+        payload = self.build(summary)
         return "\n".join(b["text"]["text"] for b in payload["blocks"])
+
+    def test_branch_and_commit_footer_on_github(self):
+        payload = self.build(SUMMARY_V1, {"GITHUB_REF_NAME": "main", "GITHUB_SHA": "abcdef1234"})
+        footer = payload["blocks"][-1]
+        self.assertEqual(footer["type"], "context")
+        self.assertIn("abcdef1", footer["elements"][0]["text"])
 
     def test_blocked_alert_mentions_exceptions_count_only(self):
         s = dict(SUMMARY_V2, status="FAIL", exit_code=1,
