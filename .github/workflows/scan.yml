@@ -17,7 +17,19 @@ on:
   # like a push would. Scheduled runs only ever run on main.
   schedule:
     - cron: "30 2 * * *"
+  # Sprint 6: optional inputs mirror Jenkins' "Build with Parameters", so the
+  # same test matrix can run on both CI systems. Empty scan_image = build and
+  # scan the repo's own image, as push / PR / schedule runs always do.
   workflow_dispatch:
+    inputs:
+      scan_image:
+        description: "Image to scan instead of the repo image (e.g. python:3.9-slim). Leave empty for the repo image."
+        required: false
+        default: ""
+      policy_file:
+        description: "Policy file to apply (e.g. tests/demo-policy-exceptions-pass.yaml)"
+        required: false
+        default: "policy.yaml"
 
 jobs:
   scan:
@@ -40,6 +52,35 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+
+      # Sprint 6: the unit tests run before anything is scanned, so a broken
+      # change fails fast and the required `scan` check covers them too.
+      - name: Run unit tests
+        run: python -m unittest discover -s tests
+
+      # Sprint 6: decide what to scan. Inputs only exist on manual runs; on
+      # push / PR / schedule both are empty, so the repo image and
+      # policy.yaml are used. Inputs arrive through env (never pasted into
+      # the script) and are checked before use: an image name may only hold
+      # image-reference characters, and the policy must be a file in the repo.
+      - name: Resolve scan target
+        id: target
+        env:
+          SCAN_IMAGE: ${{ inputs.scan_image }}
+          POLICY_FILE: ${{ inputs.policy_file }}
+        run: |
+          image="${SCAN_IMAGE:-}"
+          policy="${POLICY_FILE:-policy.yaml}"
+          if [ -n "$image" ] && ! [[ "$image" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
+            echo "::error::scan_image contains characters not allowed in an image name."; exit 2
+          fi
+          if [[ "$policy" == /* || "$policy" == *..* ]] || [ ! -f "$policy" ]; then
+            echo "::error::policy_file must be a file in this repository."; exit 2
+          fi
+          if [ -n "$image" ]; then build=false; else image=vuln-scanner-test:ci; build=true; fi
+          { echo "image=$image"; echo "policy=$policy"; echo "build=$build"; } >> "$GITHUB_OUTPUT"
+          echo "Image to scan: $image"
+          echo "Policy file:   $policy"
 
       - name: Cache Trivy database
         uses: actions/cache@v6.1.0
@@ -75,6 +116,7 @@ jobs:
       # Retry (Sprint 5): pulling the base image from Docker Hub can fail
       # briefly. A real Dockerfile error fails all 3 tries, as it should.
       - name: Build image
+        if: steps.target.outputs.build == 'true'
         run: |
           for attempt in 1 2 3; do
             if docker build -t vuln-scanner-test:ci sample-app; then break; fi
@@ -91,7 +133,10 @@ jobs:
       # into reports/, from the same scan it judges.
       # Exit 1 (policy fail) or 2 (tool error) fails the build.
       - name: Run vulnerability scan
-        run: python src/scanner.py vuln-scanner-test:ci --output-dir reports
+        env:
+          IMAGE: ${{ steps.target.outputs.image }}
+          POLICY: ${{ steps.target.outputs.policy }}
+        run: python src/scanner.py "$IMAGE" --policy "$POLICY" --output-dir reports
 
       # Turn the two JSON files into reports/report.html and report.pdf. `if: always()`
       # so a FAIL or ERROR still gets a readable report. It only reads the
@@ -109,7 +154,8 @@ jobs:
         if: failure()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python src/notify.py --input-dir reports
+          POLICY: ${{ steps.target.outputs.policy }}
+        run: python src/notify.py --input-dir reports --policy "${POLICY:-policy.yaml}"
 
       # `if: always()` uploads even when the gate fails — that's when the
       # report matters most. On a tool error only scan-summary.json may

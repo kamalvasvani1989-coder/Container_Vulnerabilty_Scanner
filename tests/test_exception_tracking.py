@@ -83,6 +83,37 @@ class DigestTests(unittest.TestCase):
         self.assertIsNone(digest.exceptions_line(SUMMARY_V1))
 
 
+class DigestLatestOnMainTests(unittest.TestCase):
+    """Sprint 6: a manual scan of another image must not become 'Latest on main'."""
+
+    def record(self, when, image, status):
+        summary = dict(SUMMARY_V2, image=image, status=status, exceptions=[])
+        return {"when": when, "branch": "main", "event": "workflow_dispatch",
+                "status": status, "summary": summary}
+
+    def text(self, records):
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 25, tzinfo=timezone.utc)
+        payload = digest.build_digest(records, 7, now, now)
+        return payload["blocks"][1]["text"]["text"]
+
+    def test_other_image_does_not_replace_latest_on_main(self):
+        text = self.text([self.record("2026-10-24T08:00:00Z", "vuln-scanner-test:ci", "PASS"),
+                          self.record("2026-10-25T08:00:00Z", "python:3.9-slim", "FAIL")])
+        self.assertIn("*Latest on main:* PASS", text)
+        self.assertIn("python:3.9-slim", text)          # still listed as blocked
+
+    def test_no_repo_image_scan_means_no_latest_line(self):
+        text = self.text([self.record("2026-10-25T08:00:00Z", "python:3.9-slim", "FAIL")])
+        self.assertNotIn("Latest on main", text)
+
+    def test_is_repo_image(self):
+        self.assertTrue(digest.is_repo_image("vuln-scanner-test:ci"))
+        self.assertTrue(digest.is_repo_image("vuln-scanner-test:jenkins-12"))
+        self.assertFalse(digest.is_repo_image("python:3.9-slim"))
+        self.assertFalse(digest.is_repo_image(None))
+
+
 class SlackAlertTests(unittest.TestCase):
     def alert_text(self, summary):
         payload = notify.build_message(summary, ["CRITICAL"])

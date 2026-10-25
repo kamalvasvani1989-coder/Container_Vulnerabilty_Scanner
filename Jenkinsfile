@@ -69,6 +69,14 @@ pipeline {
             }
         }
 
+        // Sprint 6: same unit tests as GitHub Actions, before anything is
+        // built or scanned. A failing test fails the build here.
+        stage('Unit tests') {
+            steps {
+                sh '.venv/bin/python -m unittest discover -s tests'
+            }
+        }
+
         stage('Build image') {
             when { expression { !params.SCAN_IMAGE?.trim() } }
             steps {

@@ -54,6 +54,12 @@ DEFAULT_WORKFLOW = "scan.yml"
 TIMEOUT_SECONDS = 30
 MAX_BLOCKED_LISTED = 10
 
+# The repo's own image. Manual runs can scan other images too (Sprint 6
+# scan_image input, e.g. a test of python:3.9-slim); those still count in
+# the totals and blocked list, but must not become "Latest on main", which
+# describes what this repo would ship.
+REPO_IMAGE = "vuln-scanner-test"
+
 
 # --- GitHub API -------------------------------------------------------------
 
@@ -156,6 +162,11 @@ def collect(github, workflow, since):
     return records
 
 
+def is_repo_image(image):
+    """True for the repo's own image (any tag), e.g. vuln-scanner-test:ci."""
+    return (image or "").split(":", 1)[0] == REPO_IMAGE
+
+
 def exceptions_line(summary):
     """
     One line on the exceptions in a scan summary, counts only.
@@ -207,7 +218,8 @@ def build_digest(records, days, since, now):
     ]
 
     # Latest result on main: the current state of what would ship.
-    main_runs = [r for r in records if r["branch"] == "main" and r["summary"]]
+    main_runs = [r for r in records if r["branch"] == "main" and r["summary"]
+                 and is_repo_image(r["summary"].get("image"))]
     if main_runs:
         latest = main_runs[-1]["summary"]
         counts = latest.get("counts") or {}
