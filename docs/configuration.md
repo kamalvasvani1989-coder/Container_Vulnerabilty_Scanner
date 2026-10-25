@@ -79,7 +79,8 @@ Secret values are never committed or printed. Names and locations:
 |---|---|---|---|
 | GitHub → Settings → Secrets → Actions | `SLACK_WEBHOOK_URL` | `scan.yml`, `weekly-digest.yml` | Slack incoming webhook URL |
 | Jenkins → Credentials (Secret text) | `slack-webhook-url` | `Jenkinsfile` | Same webhook URL |
-| `monitoring/.env` (git-ignored, 600) | `GITHUB_TOKEN` | exporter | Fine-grained token: this repo only, Actions read-only. Has an expiry |
+| `monitoring/.env` (git-ignored, 600) | `GITHUB_REPOSITORY` | exporter | `owner/repo` whose scan history the dashboard shows; not a secret |
+| `monitoring/.env` | `GITHUB_TOKEN` | exporter | Fine-grained token: this repo only, Actions read-only. Has an expiry |
 | `monitoring/.env` | `JENKINS_USER`, `JENKINS_TOKEN` | exporter | Jenkins user **ID** and API token. Has an expiry if you set one |
 | `monitoring/.env` | `GRAFANA_ADMIN_PASSWORD` | Grafana | Applied on Grafana's first start only |
 | `ci/jenkins/.env` (git-ignored) | `DOCKER_GID` | Jenkins | Group of the Docker socket; not a secret, machine-specific |

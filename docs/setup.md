@@ -18,8 +18,16 @@ Free ports needed: 8080 (Jenkins), 9090 (Prometheus), 3000 (Grafana).
 
 ## 2. Get the code and check prerequisites
 
+Work in **your own copy** of the repository, because GitHub secrets, the branch ruleset, Actions runs and the dashboard's token all belong to a repository:
+
+- **Fork** it on GitHub (Fork button), or
+- if you already own the original, create an empty repository and push a copy:
+  `git clone --bare <original-url> tmp.git && cd tmp.git && git push --mirror <your-new-repo-url> && cd .. && rm -rf tmp.git`
+
+Then clone your copy:
+
 ```bash
-git clone https://github.com/kamalvasvani1989-coder/Container_Vulnerabilty_Scanner.git vuln-scanner
+git clone https://github.com/<you>/<your-repo>.git vuln-scanner
 cd vuln-scanner
 ./deploy.sh check
 ```
@@ -65,10 +73,11 @@ Create a **GitHub fine-grained personal access token** first: Settings → Devel
 ./deploy.sh monitoring
 ```
 
-It needs Jenkins running (it joins Jenkins' Docker network) and asks for four values at a hidden prompt, saved only in the git-ignored `monitoring/.env` (permissions 600):
+It needs Jenkins running (it joins Jenkins' Docker network) and asks for five values (secrets at a hidden prompt), saved only in the git-ignored `monitoring/.env` (permissions 600):
 
 | Value | What to enter |
 |---|---|
+| `GITHUB_REPOSITORY` | Your repository as `owner/repo`; press Enter to accept the value read from your clone |
 | `GITHUB_TOKEN` | The fine-grained token above |
 | `JENKINS_USER` | Your Jenkins **user ID** (not the display name) |
 | `JENKINS_TOKEN` | The Jenkins API token from step 4.7 |
@@ -105,6 +114,21 @@ The workflows need no other setup: `scan.yml` runs on every push and PR to `main
 ```
 
 Expected: the four containers `Up`, and Jenkins, Prometheus and Grafana responding. Then open a small PR to see the `scan` check run, or follow [usage.md](usage.md).
+
+## On a cloud VM instead of WSL
+
+For example on AWS EC2 with Ubuntu 24.04 LTS. The differences from WSL:
+
+| Topic | What to do |
+|---|---|
+| Size | 2 vCPU, 4–8 GB RAM, 30 GB disk: e.g. `t3.medium`. On an AWS **free plan** account (created on or after 15 Jul 2025) use a free-plan-eligible type instead: `m7i-flex.large` (8 GB, recommended) or `c7i-flex.large` (4 GB); usage is paid from the account's credits |
+| Network | Allow inbound **SSH (22) from your IP only**. Do not open 8080, 3000 or 9090: the services listen on `127.0.0.1` |
+| Docker | Docker Engine instead of Docker Desktop: `curl -fsSL https://get.docker.com \| sudo sh`, then `sudo usermod -aG docker "$USER"` and log out and back in |
+| Packages | `sudo apt update && sudo apt install -y git curl python3 python3-venv python3-pip` |
+| Web UIs | Reach them through an SSH tunnel, then open `http://localhost:8080` / `:3000` / `:9090` in your own browser: `ssh -i key.pem -L 8080:localhost:8080 -L 3000:localhost:3000 -L 9090:localhost:9090 ubuntu@<vm-ip>` |
+| Cost | About $0.045/hour for `t3.medium` in Mumbai (more in some regions). **Stop or terminate the VM when you are done** ([cost.md](cost.md)) |
+
+Everything else (`deploy.sh`, the one-time steps) is the same.
 
 ## Start, stop, re-run
 

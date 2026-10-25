@@ -37,7 +37,7 @@ JENKINS_ENV="ci/jenkins/.env"
 JENKINS_IMAGE="vuln-scanner-jenkins:local"
 MON_COMPOSE="monitoring/docker-compose.yml"
 MON_ENV="monitoring/.env"
-MON_KEYS=(GITHUB_TOKEN JENKINS_USER JENKINS_TOKEN GRAFANA_ADMIN_PASSWORD)
+MON_KEYS=(GITHUB_REPOSITORY GITHUB_TOKEN JENKINS_USER JENKINS_TOKEN GRAFANA_ADMIN_PASSWORD)
 
 ok()   { printf '  [ OK ] %s\n' "$*"; }
 warn() { printf '  [WARN] %s\n' "$*"; }
@@ -107,7 +107,9 @@ cmd_check() {
     if ! have docker; then
         bad "docker not found (install Docker Desktop and enable WSL integration)"; fail=1
     elif ! docker info >/dev/null 2>&1; then
-        bad "Docker is installed but not running, or this user can't reach it"; fail=1
+        bad "Docker is installed but not running, or this user can't reach it"
+        echo "         Linux/cloud VM: sudo usermod -aG docker \"\$USER\", then log out and back in"
+        fail=1
     else
         ok "Docker is running"
         if docker compose version >/dev/null 2>&1; then
@@ -228,6 +230,13 @@ cmd_jenkins() {
 }
 
 # ---------------------------------------------------------------- monitoring
+# owner/repo of this clone's GitHub remote, offered as the default.
+repo_from_origin() {
+    git remote get-url origin 2>/dev/null \
+        | sed -E 's#^(https://[^/]*github\.com/|git@github\.com:)##; s#\.git$##' \
+        | grep -E '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || true
+}
+
 ask_mon_env() {
     step "Monitoring: $MON_ENV"
     if [ ! -f "$MON_ENV" ]; then
@@ -240,12 +249,24 @@ ask_mon_env() {
     for key in "${MON_KEYS[@]}"; do
         if env_has "$MON_ENV" "$key"; then ok "$key already set (kept)"; continue; fi
         case "$key" in
+            GITHUB_REPOSITORY) echo "  Your repository on GitHub as owner/repo (whose scan history the dashboard shows)." ;;
             GITHUB_TOKEN)  echo "  GitHub fine-grained token (this repo only, Actions: Read-only)." ;;
             JENKINS_USER)  echo "  Jenkins user ID: the part after /user/ in your Jenkins profile URL." ;;
             JENKINS_TOKEN) echo "  Jenkins API token: Jenkins > your name > Security > API Token." ;;
             GRAFANA_ADMIN_PASSWORD) echo "  Grafana admin password to set (only used on Grafana's first start)." ;;
         esac
-        if [ "$key" = JENKINS_USER ]; then
+        if [ "$key" = GITHUB_REPOSITORY ]; then
+            local guess
+            guess="$(repo_from_origin)"
+            if [ -n "$guess" ]; then
+                read -r -p "  $key [$guess]: " val
+                val="${val:-$guess}"
+            else
+                read -r -p "  $key: " val
+            fi
+            [[ "$val" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+                || die "GITHUB_REPOSITORY must look like owner/repo (got: $val)."
+        elif [ "$key" = JENKINS_USER ]; then
             read -r -p "  $key: " val
         else
             read -r -s -p "  $key (hidden): " val; echo
@@ -258,8 +279,11 @@ ask_mon_env() {
         esac
         # Replace the KEY= line in place; awk reads the value from the
         # environment, so it never appears in a command line.
-        KEY="$key" VAL="$val" awk 'BEGIN{k=ENVIRON["KEY"]; v=ENVIRON["VAL"]}
-            $0 ~ "^"k"=" {print k"="v; next} {print}' "$MON_ENV" > "$MON_ENV.tmp"
+        # (appended if the file has no KEY= line, e.g. one made from an
+        # older .env.example).
+        KEY="$key" VAL="$val" awk 'BEGIN{k=ENVIRON["KEY"]; v=ENVIRON["VAL"]; f=0}
+            $0 ~ "^"k"=" {print k"="v; f=1; next} {print}
+            END{if (!f) print k"="v}' "$MON_ENV" > "$MON_ENV.tmp"
         mv "$MON_ENV.tmp" "$MON_ENV"; chmod 600 "$MON_ENV"
         unset val
         ok "$key saved"

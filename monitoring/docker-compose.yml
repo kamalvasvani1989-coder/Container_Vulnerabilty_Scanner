@@ -18,7 +18,8 @@ services:
     image: vuln-scanner-exporter:local
     container_name: vuln-scanner-exporter
     environment:
-      GITHUB_REPOSITORY: kamalvasvani1989-coder/Container_Vulnerabilty_Scanner
+      # owner/repo whose scan history to read (your fork or copy).
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:?Set GITHUB_REPOSITORY in monitoring/.env}
       GITHUB_TOKEN: ${GITHUB_TOKEN:?Set GITHUB_TOKEN in monitoring/.env}
       # Reached by container name over Jenkins' own Docker network.
       JENKINS_URL: http://vuln-scanner-jenkins:8080
