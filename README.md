@@ -30,8 +30,10 @@ A **shift-left security** tool: every container image is scanned for known vulne
 
 Prerequisites: Ubuntu on WSL2 (or Linux), Docker Desktop with WSL integration, Git, Python 3.10+.
 
+Fork the repository first (see [docs/setup.md](docs/setup.md)), then:
+
 ```bash
-git clone https://github.com/kamalvasvani1989-coder/Container_Vulnerabilty_Scanner.git vuln-scanner
+git clone https://github.com/<you>/<your-repo>.git vuln-scanner
 cd vuln-scanner
 ./deploy.sh check      # read-only check of everything below
 ./deploy.sh all        # venv + packages, Trivy, PDF libraries, tests, Jenkins, monitoring
@@ -97,6 +99,7 @@ docs/                the documentation below
 | [docs/maintenance.md](docs/maintenance.md) | Token renewals, version pins, routine checks |
 | [docs/testing.md](docs/testing.md) | Unit tests and the cross-CI test matrix with results |
 | [docs/cost.md](docs/cost.md) | Current $0 setup and what production would cost |
+| [docs/beta-testing.md](docs/beta-testing.md) | Guide for beta testers: setup, tasks, how to report |
 
 ## Testing
 

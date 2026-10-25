@@ -1,0 +1,76 @@
+name: Beta feedback
+description: Report a problem, an unclear step or a suggestion from beta testing
+title: "[Beta] "
+labels: ["beta-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! One finding per issue, please.
+        **Never paste tokens, passwords or webhook URLs** (also check screenshots).
+  - type: dropdown
+    id: setup
+    attributes:
+      label: Where did you run it?
+      options:
+        - WSL on Windows
+        - Linux (own machine)
+        - Cloud VM (e.g. AWS EC2)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: task
+    attributes:
+      label: Which task?
+      description: Numbers from docs/beta-testing.md
+      options:
+        - "Getting a copy / deploy.sh check"
+        - "1 Set up"
+        - "2 Scan a vulnerable image"
+        - "3 Scan a clean image"
+        - "4 Read the report"
+        - "5 Approve an exception"
+        - "6 Break it on purpose"
+        - "7 Jenkins"
+        - "8 GitHub Actions"
+        - "9 Slack"
+        - "10 Dashboard"
+        - "Documentation in general"
+        - "Everything worked"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options:
+        - Something broke
+        - A step was unclear
+        - Suggestion
+        - Everything worked
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you do and expect?
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened instead?
+  - type: textarea
+    id: output
+    attributes:
+      label: Error or console output (optional)
+      render: shell
+  - type: dropdown
+    id: ease
+    attributes:
+      label: How easy was this task? (1 = very hard, 5 = very easy)
+      options: ["1", "2", "3", "4", "5"]
+  - type: input
+    id: time
+    attributes:
+      label: Roughly how long did the whole setup take?
+      placeholder: "e.g. 45 minutes"
