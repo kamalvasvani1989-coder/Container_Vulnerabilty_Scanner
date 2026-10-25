@@ -143,6 +143,25 @@ def should_mention(summary, mention_on):
     return any(counts.get(sev, 0) > 0 for sev in mention_on)
 
 
+def ci_source():
+    """
+    Which CI system is sending this alert, from variables each one sets
+    automatically: GitHub Actions sets GITHUB_ACTIONS=true and
+    GITHUB_RUN_NUMBER; Jenkins sets BUILD_NUMBER in every shell step, plus
+    JENKINS_HOME (always) and JENKINS_URL (once its URL is configured).
+    Checked in that order. None for a manual run, so the message then has
+    no Source label.
+    """
+    env = os.environ
+    if env.get("GITHUB_ACTIONS") == "true":
+        run = env.get("GITHUB_RUN_NUMBER", "").strip()
+        return f"GitHub Actions run #{run}" if run.isdigit() else "GitHub Actions"
+    if env.get("BUILD_NUMBER") and (env.get("JENKINS_URL") or env.get("JENKINS_HOME")):
+        build = env.get("BUILD_NUMBER", "").strip()
+        return f"Jenkins build #{build}" if build.isdigit() else "Jenkins"
+    return None
+
+
 def build_message(summary, mention_on=DEFAULT_MENTION_ON):
     """Build the Slack payload: a plain-text fallback plus formatted blocks."""
     status = summary.get("status")
@@ -171,8 +190,12 @@ def build_message(summary, mention_on=DEFAULT_MENTION_ON):
             "```" + slack_escape(summary.get("error") or "No error details.") + "```",
         ]
 
-    # Where it came from, when running in GitHub Actions.
+    # Where it came from. Source tells the reader which CI system to open,
+    # since Jenkins passes its branch/commit in GitHub's format (Sprint 6).
     context = []
+    source = ci_source()
+    if source:
+        context.append(f"Source: {source}")
     branch = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_REF_NAME")
     if branch:
         context.append(f"Branch: `{slack_escape(branch)}`")

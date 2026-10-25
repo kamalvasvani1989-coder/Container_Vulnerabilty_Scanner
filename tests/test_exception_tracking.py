@@ -116,11 +116,15 @@ class DigestLatestOnMainTests(unittest.TestCase):
 
 
 class SlackAlertTests(unittest.TestCase):
-    # notify.py adds a Branch/Commit context block when GitHub's variables
-    # (GITHUB_SHA, GITHUB_REF_NAME, ...) are set, as they are on a GitHub
-    # Actions runner. Clear them so the message is the same everywhere.
+    # notify.py adds a Source/Branch/Commit context block when CI variables
+    # are set: GitHub's (GITHUB_*) on a GitHub runner, Jenkins' (JENKINS_URL,
+    # JENKINS_HOME, BUILD_NUMBER) in a Jenkins build. Clear them so the message is the
+    # same everywhere.
+    CI_VARS = ("JENKINS_URL", "JENKINS_HOME", "BUILD_NUMBER")
+
     def build(self, summary, env=None):
-        clean = {k: v for k, v in os.environ.items() if not k.startswith("GITHUB_")}
+        clean = {k: v for k, v in os.environ.items()
+                 if not k.startswith("GITHUB_") and k not in self.CI_VARS}
         clean.update(env or {})
         with mock.patch.dict(os.environ, clean, clear=True):
             return notify.build_message(summary, ["CRITICAL"])
@@ -134,6 +138,32 @@ class SlackAlertTests(unittest.TestCase):
         footer = payload["blocks"][-1]
         self.assertEqual(footer["type"], "context")
         self.assertIn("abcdef1", footer["elements"][0]["text"])
+
+    def footer(self, env):
+        blocks = self.build(SUMMARY_V1, env)["blocks"]
+        return blocks[-1]["elements"][0]["text"] if blocks[-1]["type"] == "context" else ""
+
+    def test_source_github_actions(self):
+        text = self.footer({"GITHUB_ACTIONS": "true", "GITHUB_RUN_NUMBER": "76",
+                            "GITHUB_REF_NAME": "main", "GITHUB_SHA": "3646539abc"})
+        self.assertTrue(text.startswith("Source: GitHub Actions run #76"))
+        self.assertIn("Commit: `3646539`", text)
+
+    def test_source_jenkins(self):
+        # Jenkins maps its branch/commit onto GitHub-style names, but does
+        # not set GITHUB_ACTIONS, so it must still say Jenkins.
+        text = self.footer({"JENKINS_URL": "http://jenkins:8080/", "BUILD_NUMBER": "17",
+                            "GITHUB_REF_NAME": "main", "GITHUB_SHA": "3646539abc"})
+        self.assertTrue(text.startswith("Source: Jenkins build #17"))
+        self.assertNotIn("GitHub", text)
+
+    def test_source_jenkins_without_configured_url(self):
+        text = self.footer({"JENKINS_HOME": "/var/jenkins_home", "BUILD_NUMBER": "18"})
+        self.assertTrue(text.startswith("Source: Jenkins build #18"))
+
+    def test_no_source_for_manual_run(self):
+        self.assertEqual(self.footer({}), "")
+        self.assertNotIn("Source:", self.footer({"GITHUB_REF_NAME": "main"}))
 
     def test_blocked_alert_mentions_exceptions_count_only(self):
         s = dict(SUMMARY_V2, status="FAIL", exit_code=1,
