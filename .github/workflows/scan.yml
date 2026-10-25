@@ -77,7 +77,7 @@ jobs:
       - name: Build image
         run: |
           for attempt in 1 2 3; do
-            if docker build -t vuln-scanner-test:ci .; then break; fi
+            if docker build -t vuln-scanner-test:ci sample-app; then break; fi
             if [ "$attempt" = 3 ]; then
               echo "::error::Image build failed after 3 attempts."; exit 1
             fi
@@ -91,14 +91,14 @@ jobs:
       # into reports/, from the same scan it judges.
       # Exit 1 (policy fail) or 2 (tool error) fails the build.
       - name: Run vulnerability scan
-        run: python scanner.py vuln-scanner-test:ci --output-dir reports
+        run: python src/scanner.py vuln-scanner-test:ci --output-dir reports
 
       # Turn the two JSON files into reports/report.html and report.pdf. `if: always()`
       # so a FAIL or ERROR still gets a readable report. It only reads the
       # verdict from scan-summary.json; it never re-decides pass/fail.
       - name: Generate HTML and PDF report
         if: always()
-        run: python report.py --input-dir reports --pdf
+        run: python src/report.py --input-dir reports --pdf
 
       # Alert Slack only when something needs attention. `if: failure()`
       # runs this step only if an earlier step failed: a policy block
@@ -109,7 +109,7 @@ jobs:
         if: failure()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: python notify.py --input-dir reports
+        run: python src/notify.py --input-dir reports
 
       # `if: always()` uploads even when the gate fails — that's when the
       # report matters most. On a tool error only scan-summary.json may

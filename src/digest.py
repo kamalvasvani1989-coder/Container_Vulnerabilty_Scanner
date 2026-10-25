@@ -24,9 +24,9 @@ Runs in GitHub Actions (weekly-digest.yml) with:
 Like notify.py, the message carries no links and no CVE details.
 
 Usage:
-  python digest.py                 # last 7 days
-  python digest.py --days 1        # daily summary
-  python digest.py --dry-run       # print the message, don't send it
+  python src/digest.py                 # last 7 days
+  python src/digest.py --days 1        # daily summary
+  python src/digest.py --dry-run       # print the message, don't send it
 
 Exit codes:
   0  summary sent (or printed with --dry-run, or webhook not configured)

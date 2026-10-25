@@ -13,7 +13,7 @@ name: vuln-monitoring
 services:
   exporter:
     build:
-      context: ..                       # repo root: exporter.py and the scripts it imports
+      context: ..                       # repo root: src/exporter.py and the scripts it imports
       dockerfile: monitoring/exporter.Dockerfile
     image: vuln-scanner-exporter:local
     container_name: vuln-scanner-exporter
