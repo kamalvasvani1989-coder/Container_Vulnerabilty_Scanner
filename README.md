@@ -1,259 +1,120 @@
 # Container Image Vulnerability Scanner
 
-A **shift-left security** tool that scans container images for known vulnerabilities and gates the build pipeline before insecure images ever reach production. Built by orchestrating around [Trivy](https://github.com/aquasecurity/trivy) rather than reinventing a scanner — fast to build, cheap to run, and aligned with how real CI/CD security works.
+A **shift-left security** tool: every container image is scanned for known vulnerabilities **before** it can be merged or shipped, and the build is blocked when the image breaks the security policy. It wraps the open-source scanner [Trivy](https://github.com/aquasecurity/trivy) with a policy gate, reports, Slack alerts, approved exceptions and a trend dashboard, and runs identically on **GitHub Actions** and **Jenkins**. Running cost: **$0**.
 
-> **Shift-left** means catching security problems as early as possible — at the developer's commit, not after deployment. The earlier a vulnerability is caught, the cheaper it is to fix.
+![Architecture](docs/architecture.png)
 
----
+## Contents
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [How the gate decides](#how-the-gate-decides)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+- [Testing](#testing)
+- [Project history](#project-history)
 
-## Table of Contents
+## What it does
 
-- [Why This Project](#why-this-project)
-- [Key Concepts](#key-concepts)
-- [System Architecture](#system-architecture)
-- [Scan & Gate Flow](#scan--gate-flow)
-- [Technology Stack](#technology-stack)
-- [Getting Started](#getting-started)
-- [Usage](#usage)
-- [Exit Codes](#exit-codes)
-- [Tuning the Policy Gate](#tuning-the-policy-gate)
-- [How It Works](#how-it-works)
-- [Roadmap](#roadmap)
-- [Project Structure](#project-structure)
+| Goal (from the brief) | How it is met |
+|---|---|
+| **Scan images** for known CVEs | `src/scanner.py` runs Trivy 0.76.0 (pinned) and counts findings by severity |
+| **Gate CI/CD** on severity | `policy.yaml` thresholds (CRITICAL 0, HIGH 10). GitHub Actions blocks the PR through the required `scan` check; Jenkins fails the build |
+| **Reports** | `src/report.py`: HTML and PDF report per scan, plus the raw Trivy JSON and a `scan-summary.json` verdict |
+| **Notifications** | `src/notify.py`: Slack alert on FAIL or ERROR only (passing scans are silent), `@channel` for CRITICAL, with the source system, branch and commit. `src/digest.py`: weekly Slack summary |
+| **Dashboard** | `src/exporter.py` → Prometheus → Grafana: open, found and resolved vulnerabilities over time, filterable by source, image and severity |
+| **Exceptions** | Approved known CVEs in `policy.yaml`, each with reason, approver and an expiry of at most 90 days; still reported, but not counted while active |
+| **Rescans** | Daily scheduled rescan (08:00 IST) and an on-demand **Run workflow**; each rescan rebuilds the image |
+| **Reliability** | Retries for Trivy, the image build and Slack; any tool or configuration problem is an ERROR, never a silent pass |
 
----
+## Quick start
 
-## Why This Project
-
-Container images are built from many layers, each potentially carrying outdated packages with published CVEs (Common Vulnerabilities and Exposures). Shipping these to production exposes the whole system. This scanner:
-
-- **Detects** known vulnerabilities in any container image.
-- **Decides** pass or fail against a tunable policy.
-- **Blocks** the pipeline automatically when an image is too risky.
-- **Reports** results so humans and dashboards can act.
-
-Two principles drive the design:
-
-- **Wrap, don't rebuild.** Trivy is the proven scanning engine. The value is in the orchestration layer around it — running it, interpreting it, and enforcing policy.
-- **Vertical slice first.** Get one thin end-to-end path working (push → scan → gate) before expanding to reporting, dashboards, and exceptions.
-
----
-
-## Key Concepts
-
-| Term | Meaning |
-|------|---------|
-| **Policy Gate** | The pass/fail rule. Counts vulnerabilities by severity and compares against configured limits. |
-| **Tool failure vs. policy failure** | A *crash* (couldn't scan) is treated completely differently from a *block* (scan worked, too many vulns). They must never be confused. |
-| **Severity threshold** | The maximum tolerated count per severity level (e.g. `CRITICAL: 0`, `HIGH: 10`). Exceeding it fails the build. |
-| **Exit code contract** | The numeric signal the script returns so CI/CD knows what happened without parsing text. |
-
----
-
-## System Architecture
-
-How the components connect — from a developer's commit, through the Sprint 1 orchestration layer, to the three possible outcomes. The dashed box holds components planned for later sprints.
-
-![System architecture diagram](architecture.png)
-
-The developer pushes code, an image is built, and `scanner.py` takes over: it reads thresholds from `policy.yaml`, runs Trivy against the image, and feeds the results into the policy gate. The gate produces exactly one of three exit codes — pass, policy fail, or tool error — which is what CI/CD acts on in the next sprint.
-
----
-
-## Scan & Gate Flow
-
-The runtime sequence of a single scan — the four jobs `scanner.py` performs, and how each outcome maps to an exit code.
-
-```mermaid
-flowchart TD
-    Start([Run: python scanner.py IMAGE]) --> Load[Load policy.yaml]
-    Load --> PolicyOK{Policy<br/>readable?}
-    PolicyOK -->|No| Err[/Exit 2 — TOOL ERROR/]
-
-    PolicyOK -->|Yes| RunTrivy[Run Trivy<br/>trivy image --format json --quiet]
-    RunTrivy --> TrivyOK{Trivy ran<br/>successfully?}
-    TrivyOK -->|No| Err
-
-    TrivyOK -->|Yes| Parse[Parse JSON<br/>walk Results then Vulnerabilities]
-    Parse --> Count[Count vulnerabilities<br/>grouped by severity]
-    Count --> Gate{Any severity<br/>exceeds<br/>threshold?}
-
-    Gate -->|Yes| Fail[/Exit 1 — POLICY FAIL<br/>block the build/]
-    Gate -->|No| Pass[/Exit 0 — PASS<br/>build continues/]
-
-    Parse --> Report[Print summary table]
-    Report --> Gate
-
-    style Err fill:#f8d7da,stroke:#a71d2a
-    style Fail fill:#fff3cd,stroke:#d39e00
-    style Pass fill:#d4edda,stroke:#2d7a3e
-    style Start fill:#e8f4ea,stroke:#2d7a3e
-```
-
-The split between exit `1` and exit `2` is deliberate: a **broken scanner must never look like a passing build**, and a **vulnerability block must never look like a crash**.
-
----
-
-## Technology Stack
-
-| Layer | Tool | Status |
-|-------|------|--------|
-| Scanning engine | **Trivy** | Sprint 1 ✅ |
-| Orchestration | **Python 3.11+** | Sprint 1 ✅ |
-| Policy config | **YAML** (PyYAML) | Sprint 1 ✅ |
-| CI/CD gating | **GitHub Actions** → **Jenkins** | Later |
-| Notifications | **Slack webhooks** | Later |
-| Reporting | **Jinja2 + WeasyPrint** | Later |
-| Metrics & dashboard | **Prometheus Pushgateway + Grafana** | Later |
-| Storage | **SQLite → PostgreSQL** | Later |
-| Environment | **WSL2 + Docker Desktop** | Setup ✅ |
-
----
-
-## Getting Started
-
-### Prerequisites
-
-The full environment setup (WSL2, Docker, Python, Trivy, Git) is covered in the separate setup guide. In short, you need Trivy installed and Docker running.
-
-### Install dependencies
-
-From inside the project folder, with your virtual environment active (your prompt should show `(.venv)`):
+Prerequisites: Ubuntu on WSL2 (or Linux), Docker Desktop with WSL integration, Git, Python 3.10+.
 
 ```bash
-pip install pyyaml
+git clone https://github.com/kamalvasvani1989-coder/Container_Vulnerabilty_Scanner.git vuln-scanner
+cd vuln-scanner
+./deploy.sh check      # read-only check of everything below
+./deploy.sh all        # venv + packages, Trivy, PDF libraries, tests, Jenkins, monitoring
 ```
 
-That's the only dependency. Everything else is the Python standard library plus Trivy itself.
-
----
-
-## Usage
-
-Run a scan against an image:
+Then scan an image locally:
 
 ```bash
-python scanner.py python:3.9-slim
+source .venv/bin/activate
+python src/scanner.py python:3.9-slim --output-dir reports   # FAIL: CRITICAL 6
+python src/report.py --input-dir reports --pdf                # reports/report.html + report.pdf
 ```
 
-Use a specific policy file:
+`deploy.sh` is safe to run again: it skips what is already done, keeps existing `.env` values and never deletes Docker volumes. A few one-time steps (Jenkins setup wizard and job, Slack webhook, GitHub secret and branch ruleset) are manual: see [docs/setup.md](docs/setup.md).
+
+| Service | URL |
+|---|---|
+| Jenkins | http://localhost:8080 |
+| Grafana dashboard | http://localhost:3000 (user `admin`) |
+| Prometheus | http://localhost:9090 |
+
+All three listen on `127.0.0.1` only: this is a local lab setup.
+
+## How the gate decides
+
+1. `scanner.py` runs Trivy once and writes `trivy-report.json` (raw findings) and `scan-summary.json` (the verdict). Reports, alerts, the digest and the dashboard all read these files; nothing re-decides pass or fail.
+2. Findings covered by an **active** exception are reported but not counted.
+3. A severity **fails** when its count **exceeds** its limit (`HIGH: 10` allows 10, blocks 11).
+4. The exit code tells CI/CD what happened:
+
+| Exit | Meaning | GitHub Actions | Jenkins | Slack |
+|---|---|---|---|---|
+| 0 | PASS: policy satisfied | check green, PR can merge | build SUCCESS | none |
+| 1 | FAIL: policy breached | check red, merge blocked | "Blocked by policy" | 🔴/🟠 alert, `@channel` for CRITICAL |
+| 2 | ERROR: tool or config problem, no verdict | check red | "Tool error, investigate" | ⚠️ "Scan did not complete" |
+
+A broken policy file, a malformed exception, a missing Trivy or an unreachable registry is always exit 2, never a pass.
+
+## Repository layout
+
+```
+src/                 scanner.py  report.py  notify.py  digest.py  exporter.py  templates/
+sample-app/          Dockerfile  app.py            the image under test (python:3.13-alpine)
+policy.yaml          thresholds, Slack mentions, exceptions
+tests/               unit tests + demo policies for the exception tests
+Jenkinsfile          Jenkins pipeline (parameters SCAN_IMAGE, POLICY_FILE)
+.github/workflows/   scan.yml (gate, rescans, manual runs)  weekly-digest.yml
+ci/jenkins/          local Jenkins image and compose file
+monitoring/          exporter, Prometheus and Grafana (compose, dashboard, backfill)
+deploy.sh            setup and start/stop script
+requirements.txt     pinned Python packages
+docs/                the documentation below
+```
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/setup.md](docs/setup.md) | Prerequisites, `deploy.sh`, and the one-time manual steps |
+| [docs/usage.md](docs/usage.md) | Local scans, reports, PR gate, rescans, manual runs, Jenkins parameters, digest, dashboard |
+| [docs/configuration.md](docs/configuration.md) | `policy.yaml` (thresholds, alerts, exceptions), secrets, environment files |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Common problems and fixes, known limitations |
+| [docs/maintenance.md](docs/maintenance.md) | Token renewals, version pins, routine checks |
+| [docs/testing.md](docs/testing.md) | Unit tests and the cross-CI test matrix with results |
+| [docs/cost.md](docs/cost.md) | Current $0 setup and what production would cost |
+
+## Testing
 
 ```bash
-python scanner.py python:3.9-slim --policy policy.yaml
+python -m unittest discover -s tests     # 50 tests; also run by both pipelines before scanning
 ```
 
-> `python:3.9-slim` is a deliberately older, vulnerable image — useful for confirming the gate actually fails on its first run.
+The same five-case matrix (pass, policy fail, exceptions pass, expired exception, broken exception) was run on Jenkins and GitHub Actions with identical results: see [docs/testing.md](docs/testing.md).
 
-Check the exit code after a run:
+## Project history
 
-```bash
-python scanner.py python:3.9-slim
-echo "exit code: $?"
-```
+| Sprint | Delivered |
+|---|---|
+| 1 | Trivy setup, `scanner.py`, `policy.yaml`, exit-code contract |
+| 2 | GitHub Actions gate with branch ruleset; local Jenkins pipeline with parameters |
+| 3 | Single-scan JSON outputs, HTML/PDF report, Slack alerts by severity, weekly digest |
+| 4 | Prometheus exporter, Grafana dashboard with filters, history backfill, usability test |
+| 5 | Approved exceptions with expiry, retries, daily and on-demand rescans, exception tracking |
+| 6 | Folder structure, pinned requirements, `deploy.sh`, CI parity and test matrix, alert source label, documentation, beta feedback |
 
----
-
-## Exit Codes
-
-| Code | Meaning | When |
-|------|---------|------|
-| `0` | **PASS** | Scan ran, policy satisfied |
-| `1` | **POLICY FAIL** | Scan ran, too many vulnerabilities — block the build |
-| `2` | **TOOL ERROR** | Couldn't scan or couldn't read the policy — alert someone |
-
-CI/CD reads this code to decide whether to continue, block, or raise an alert.
-
----
-
-## Tuning the Policy Gate
-
-The gate lives in `policy.yaml`:
-
-```yaml
-thresholds:
-  CRITICAL: 0
-  HIGH: 10
-```
-
-A severity **fails the build when its count exceeds the limit.** So with `HIGH: 10`, a scan finding exactly 10 HIGHs still passes; 11 fails. `CRITICAL: 0` means any critical fails — zero tolerance.
-
-### Temporarily raising a limit
-
-When an app has more HIGHs than allowed and the upstream fix isn't released yet, raise the number to unblock the build — and document why:
-
-```yaml
-thresholds:
-  CRITICAL: 0
-  HIGH: 20   # raised from 10 for app-x, pending upstream patch;
-             # set a review date and tighten again once fixed
-```
-
-Then commit with a clear message so Git history becomes your audit trail:
-
-```bash
-git add policy.yaml
-git commit -m "Raise HIGH gate to 20 for app-x pending upstream patch"
-```
-
-> A proper per-CVE exception mechanism **with automatic expiry** arrives in a later sprint. This manual, dated approach is the Sprint 1 stand-in — and the expiry discipline (always set a review date) carries forward.
-
----
-
-## How It Works
-
-`scanner.py` performs four jobs in order:
-
-1. **Run Trivy** — calls `trivy image --format json --quiet <image>` and captures the JSON from stdout. Trivy's own `--exit-code` is deliberately *not* used, so a non-zero exit from Trivy unambiguously means the tool failed, not that vulnerabilities were found.
-2. **Parse** — walks `Results[].Vulnerabilities[]`, tolerating clean layers that have no vulnerabilities key.
-3. **Apply gate** — counts vulnerabilities by severity and compares each to its threshold.
-4. **Report** — prints the summary table and returns the exit code.
-
----
-
-## Roadmap
-
-The project is built in six sprints (~20 hours each), each adding one capability to the working vertical slice.
-
-```mermaid
-flowchart LR
-    S1[Sprint 1<br/>Python<br/>Orchestration] --> S2[Sprint 2<br/>CI/CD<br/>Gating]
-    S2 --> S3[Sprint 3<br/>Reporting &<br/>Notifications]
-    S3 --> S4[Sprint 4<br/>Dashboard]
-    S4 --> S5[Sprint 5<br/>Exceptions &<br/>Customization]
-    S5 --> S6[Sprint 6<br/>Documentation<br/>& Testing]
-
-    style S1 fill:#d4edda,stroke:#2d7a3e,stroke-width:2px
-    style S2 fill:#f5f5f5,stroke:#999
-    style S3 fill:#f5f5f5,stroke:#999
-    style S4 fill:#f5f5f5,stroke:#999
-    style S5 fill:#f5f5f5,stroke:#999
-    style S6 fill:#f5f5f5,stroke:#999
-```
-
-| Sprint | Focus | Adds |
-|--------|-------|------|
-| **1** | Orchestration layer | Run Trivy, parse, enforce pass/fail gate ✅ |
-| **2** | CI/CD gating | Wire the gate into GitHub Actions (later Jenkins) |
-| **3** | Reporting & notifications | PDF/HTML reports (Jinja2 + WeasyPrint), Slack alerts |
-| **4** | Dashboard | Push metrics to Prometheus, visualize in Grafana |
-| **5** | Exceptions & customization | Per-CVE exceptions with automatic expiry |
-| **6** | Documentation & testing | Hardening, test coverage, final docs |
-
----
-
-## Project Structure
-
-```
-vuln-scanner/
-├── scanner.py        # The wrapper: run Trivy, parse, gate, report
-├── policy.yaml       # Tunable gate thresholds
-├── README.md         # This file
-├── docs/
-│   └── architecture.svg   # System architecture diagram
-├── .gitignore        # Ignores .venv/ and result.json
-└── .venv/            # Virtual environment (not committed)
-```
-
----
-
-*Built as a solo academic project demonstrating shift-left container security with cost-conscious tooling.*
+HeroVired project by Kamal Vasvani.
