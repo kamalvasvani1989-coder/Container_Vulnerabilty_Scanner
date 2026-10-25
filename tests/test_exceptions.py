@@ -19,7 +19,7 @@ import unittest
 from datetime import date, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "src"))
 import scanner  # noqa: E402
 
 TODAY = date.today()
@@ -160,7 +160,7 @@ class EndToEndTests(unittest.TestCase):
         with open(policy, "w") as f:
             f.write("thresholds:\n  CRITICAL: 0\n  HIGH: 10\n" + textwrap.dedent(exceptions_yaml))
         out = os.path.join(self.tmp, "reports")
-        p = subprocess.run([sys.executable, os.path.join(ROOT, "scanner.py"),
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "src", "scanner.py"),
                             "vuln-scanner-test:ci", "--policy", policy, "--output-dir", out],
                            env=self.env, capture_output=True, text=True)
         with open(os.path.join(out, "scan-summary.json")) as f:

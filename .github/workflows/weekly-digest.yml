@@ -43,4 +43,4 @@ jobs:
           # Passed through env, not pasted into the command, so the input
           # can't inject shell code. digest.py rejects anything not a number.
           DAYS: ${{ inputs.days || '7' }}
-        run: python digest.py --days "$DAYS"
+        run: python src/digest.py --days "$DAYS"

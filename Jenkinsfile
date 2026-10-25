@@ -76,7 +76,7 @@ pipeline {
                 // A real Dockerfile error fails all 3 tries, as it should.
                 // Trivy itself is retried inside scanner.py.
                 retry(3) {
-                    sh 'docker build -t "$LOCAL_IMAGE" .'
+                    sh 'docker build -t "$LOCAL_IMAGE" sample-app'
                 }
             }
         }
@@ -88,7 +88,7 @@ pipeline {
                     // letting Jenkins fail here, so the report and archive
                     // stages still run on a FAIL or ERROR.
                     env.SCAN_EXIT = sh(
-                        script: '$VENV_PY scanner.py "$TARGET_IMAGE" --policy "$POLICY_PATH" --output-dir reports',
+                        script: '$VENV_PY src/scanner.py "$TARGET_IMAGE" --policy "$POLICY_PATH" --output-dir reports',
                         returnStatus: true
                     ).toString()
                     echo "scanner.py exit code: ${env.SCAN_EXIT}"
@@ -101,7 +101,7 @@ pipeline {
                 // A reporting problem fails the build visibly, but the gate
                 // and archive steps still run.
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
-                    sh '$VENV_PY report.py --input-dir reports --pdf'
+                    sh '$VENV_PY src/report.py --input-dir reports --pdf'
                 }
             }
         }
@@ -139,7 +139,7 @@ pipeline {
                         // variables, so map Jenkins' own values onto them.
                         sh '''
                             GITHUB_REF_NAME="${GIT_BRANCH#origin/}" GITHUB_SHA="$GIT_COMMIT" \
-                              $VENV_PY notify.py --input-dir reports --policy "${POLICY_PATH:-policy.yaml}"
+                              $VENV_PY src/notify.py --input-dir reports --policy "${POLICY_PATH:-policy.yaml}"
                         '''
                     }
                 } catch (err) {

@@ -12,9 +12,9 @@ This script never re-decides pass/fail. The verdict comes from
 scan-summary.json only, so the report can't disagree with the gate.
 
 Usage:
-  python report.py                       # reads reports/, writes reports/report.html
-  python report.py --input-dir reports --output reports/report.html
-  python report.py --pdf                 # also writes reports/report.pdf
+  python src/report.py                       # reads reports/, writes reports/report.html
+  python src/report.py --input-dir reports --output reports/report.html
+  python src/report.py --pdf                 # also writes reports/report.pdf
 
 Exit codes:
   0  report written

@@ -30,9 +30,9 @@ no links: the full HTML/PDF reports stay in the GitHub Actions artifact,
 behind repository access, and never get posted into the channel.
 
 Usage:
-  python notify.py                          # reads reports/scan-summary.json
-  python notify.py --input-dir reports --policy policy.yaml
-  python notify.py --dry-run                # print the message, don't send it
+  python src/notify.py                          # reads reports/scan-summary.json
+  python src/notify.py --input-dir reports --policy policy.yaml
+  python src/notify.py --dry-run                # print the message, don't send it
 
 Exit codes:
   0  alert sent, or nothing to send (PASS, or webhook not configured)

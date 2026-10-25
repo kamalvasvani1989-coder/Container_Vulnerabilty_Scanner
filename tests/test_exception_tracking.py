@@ -10,7 +10,7 @@ import sys
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "src"))
 import digest  # noqa: E402
 import notify  # noqa: E402
 import report  # noqa: E402

@@ -63,10 +63,10 @@ then loads the file with `promtool tsdb create-blocks-from openmetrics`.
 It never reads or writes the live state file.
 
 Usage:
-  python exporter.py                                   # serve on 127.0.0.1:9105
-  python exporter.py --once                            # one fetch, print metrics, exit
-  python exporter.py --state-file /data/state.json --listen 0.0.0.0:9105
-  python exporter.py --backfill history.om --prometheus-url http://prometheus:9090
+  python src/exporter.py                                   # serve on 127.0.0.1:9105
+  python src/exporter.py --once                            # one fetch, print metrics, exit
+  python src/exporter.py --state-file /data/state.json --listen 0.0.0.0:9105
+  python src/exporter.py --backfill history.om --prometheus-url http://prometheus:9090
 
 Exit codes (--once, --backfill):
   0  every configured source was read (and, for --backfill, the file written)
