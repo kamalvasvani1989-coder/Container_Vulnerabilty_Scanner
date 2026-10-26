@@ -34,6 +34,8 @@ Writes `reports/report.html` and `reports/report.pdf` from the two JSON files. T
 
 `reports/` is git-ignored. In CI the same files are kept as artifacts (see below).
 
+On a cloud VM without a browser, copy the folder to your computer with `scp` and open it there ([setup.md → From a Windows laptop without WSL](setup.md#from-a-windows-laptop-without-wsl) shows the PowerShell version).
+
 ## GitHub Actions
 
 | Trigger | What happens |

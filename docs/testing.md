@@ -47,6 +47,39 @@ Before the matrix, the demo policies' CVE IDs were re-checked against Trivy's cu
 | Unit tests failed on the GitHub runner only (PR #26, first run) | The Slack-alert tests didn't expect the Branch/Commit footer that appears when `GITHUB_*` variables are set | Tests clear those variables; a new test covers the footer (PR #26) |
 | Alerts from Jenkins and GitHub were identical, so you couldn't tell which system to open | Jenkins passes its branch and commit in GitHub's format | Footer now starts with `Source: Jenkins build #N` or `Source: GitHub Actions run #N` (PR #27); verified with Jenkins #18 and GitHub #79 |
 
+## Beta testing
+
+### Tester #0: dry run by the author as an outside user (25–26 Oct 2026)
+
+A separate free GitHub account forked the repository; everything was set up from the docs alone on a **fresh AWS EC2 instance** (free plan, `m7i-flex.large`, Ubuntu 24.04, Sydney), operated from a **Windows laptop without WSL**, with a **new Slack workspace**.
+
+| Task | Result |
+|---|---|
+| `deploy.sh check` | No FAIL; the expected WARNs, each naming the command that fixes it |
+| 1 Set up | 20 seconds; Pango and Trivy installed; 50 tests OK |
+| 2 / 3 Scans | `python:3.9-slim` FAIL exit 1 (CRITICAL 6, HIGH 122); `python:3.13-alpine` PASS exit 0 |
+| 4 Report | Generated on the VM, copied to the laptop, opened |
+| 5 Exception | `[1 excepted]`, CRITICAL 6 → 5, still FAIL |
+| 6 Broken exception | `CONFIG ERROR ... approved_by`, exit 2 |
+| 7 Jenkins on EC2 | `DOCKER_GID` detected (988 on Docker Engine); repo image PASS, `python:3.9-slim` blocked; without a Slack credential the build still ends correctly |
+| 8 GitHub Actions on the fork | FAIL as expected; Slack step skipped cleanly without the secret; the fork's daily rescan ran on its own |
+| 9 Slack (new workspace) | Alerts from both systems: `Source: GitHub Actions run #3` and `Source: Jenkins build #3` |
+| 10 Dashboard on EC2 | Exporter, GitHub and Jenkins OK on the first try; range panels needed the backfill (below) |
+
+Same counts as on WSL, Jenkins and GitHub Actions: identical results on four platforms.
+
+### Feedback log
+
+| # | Source | Feedback | Decision |
+|---|---|---|---|
+| 1 | Author, CI test matrix | Jenkins and GitHub alerts look identical | Fixed in PR #27 (Source label) |
+| 2 | Tester #0, issue #30 | Cloud VM guide doesn't cover Windows without WSL | Fixed in PR #36: PowerShell section (ssh, `icacls`, tunnel, `scp`) |
+| 3 | Tester #0, issue #31 | No way described to open the report from a cloud VM | Fixed in PR #36: `scp` instructions in the beta guide and usage |
+| 4 | Tester #0, issue #32 | Workflows in a fork must each be enabled | Fixed in PR #36: task 8 and troubleshooting |
+| 5 | Tester #0, issue #33 | A ready-made exception example would help | Fixed in PR #36: copy-paste commands with today's date |
+| 6 | Tester #0, issue #34 | `setup` output noisy on a cloud VM | Fixed in PR #36: apt output to a log file, shown only on failure; wording |
+| 7 | Tester #0, issue #35 | Range panels empty on a new install until `backfill.sh` | Fixed in PR #36: setup step no longer "optional", `deploy.sh` reminds on first run, troubleshooting row |
+
 ## Other Sprint 6 checks
 
 | Change | How it was tested |
