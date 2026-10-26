@@ -175,16 +175,23 @@ cmd_setup() {
     step "PDF libraries (Pango)"
     if pango_present; then ok "Already installed"
     else
-        echo "  Installing libpango (asks for your sudo password)..."
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq libpango-1.0-0 libpangoft2-1.0-0
+        echo "  Installing libpango (uses sudo; may ask for your password)..."
+        # Quiet install: apt/dpkg details and Ubuntu's service-restart notice
+        # (needrestart) go to a log file, shown only if something fails.
+        local log=/tmp/deploy-apt.log
+        if ! { sudo apt-get update -qq \
+               && sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+                       apt-get install -y -qq libpango-1.0-0 libpangoft2-1.0-0; } >"$log" 2>&1; then
+            tail -n 20 "$log" >&2
+            die "Installing the Pango libraries failed (full log: $log)"
+        fi
         ok "Installed"
     fi
 
     step "Trivy $TRIVY_VERSION"
     if have trivy && [ "$(trivy_version)" = "$TRIVY_VERSION" ]; then ok "Already installed"
     else
-        echo "  Installing to /usr/local/bin (asks for your sudo password)..."
+        echo "  Installing to /usr/local/bin (uses sudo; may ask for your password)..."
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sudo sh -s -- -b /usr/local/bin "v$TRIVY_VERSION"
         [ "$(trivy_version)" = "$TRIVY_VERSION" ] || die "Trivy install did not give version $TRIVY_VERSION"
@@ -242,6 +249,7 @@ ask_mon_env() {
     if [ ! -f "$MON_ENV" ]; then
         cp monitoring/.env.example "$MON_ENV"
         ok "Created $MON_ENV from .env.example"
+        MON_FIRST_RUN=1
     fi
     chmod 600 "$MON_ENV"
 
@@ -316,6 +324,13 @@ cmd_monitoring() {
     done
     if [ "$up" = "1" ]; then ok "Exporter is being scraped (up=1)"
     else warn "Exporter not scraped yet (up='${up}'). Check: docker logs vuln-scanner-exporter"; fi
+
+    if [ "${MON_FIRST_RUN:-0}" = 1 ]; then
+        echo
+        echo "  New install: load the scans made before today into the dashboard (once):"
+        echo "    bash monitoring/backfill.sh"
+        echo "  Without it, 'Scan results in selected range' and the trends only count scans from now on."
+    fi
 }
 
 # ---------------------------------------------------------------- status / down

@@ -13,6 +13,8 @@
 | `./deploy.sh monitoring`: `Jenkins' network (jenkins_default) not found` | Start Jenkins first: `./deploy.sh jenkins` |
 | `... must not contain $ or spaces` at a prompt | Docker Compose would misread the value; choose one without `$` or spaces |
 | A pasted multi-line `sudo` block does nothing | The password prompt swallowed the lines: run `sudo -v` first, then paste one line at a time |
+| Windows: `UNPROTECTED PRIVATE KEY FILE` from ssh | Restrict the key with `icacls` ([setup.md](setup.md#from-a-windows-laptop-without-wsl)) |
+| SSH to the cloud VM times out | Your public IP changed: set the security group's SSH rule to "My IP" again. After a stop/start the VM also has a new IP |
 
 ## Scanner and policy
 
@@ -35,6 +37,7 @@
 | "Send Slack alert" shows ⊘ | Normal: skipped because the scan passed |
 | `scan_image contains characters not allowed` / `policy_file must be a file in this repository` | The Run workflow inputs were rejected before use. Use an image name like `python:3.9-slim` and a repository path like `tests/demo-policy-exceptions-pass.yaml` |
 | No **Run workflow** button | Open the workflow in the Actions tab; the button is at the top right of its run list. The workflow file must be on `main` |
+| On a fork: workflows marked "Disabled" after enabling Actions | GitHub disables scheduled workflows in forks: open each workflow and click **Enable workflow** |
 | Scheduled run started hours late | GitHub delays scheduled runs when runners are busy; nothing to fix |
 | Scheduled runs stopped | GitHub pauses schedules after 60 days without repository activity: re-enable the workflow in the Actions tab |
 | `git push` to `main` rejected (`GH013`) | Expected: the branch ruleset requires a PR |
@@ -70,6 +73,7 @@
 | A changed `monitoring/.env` value isn't used | `docker compose -f monitoring/docker-compose.yml up -d` recreates the exporter |
 | Dashboard "Data sources: NOT REACHABLE" | Start the source (`./deploy.sh jenkins`), then `docker restart vuln-scanner-exporter` for an immediate fetch |
 | A new scan isn't on the dashboard yet | Wait up to ~6 minutes (exporter every 5 min, Prometheus every minute) |
+| New install: "Scan results in selected range" shows 0/0/0 and the trends are empty, although "Latest status" lists scans | Prometheus only counts scans made while it runs: run `bash monitoring/backfill.sh` once |
 | Check whether Prometheus scrapes the exporter | `curl -s -G http://localhost:9090/api/v1/query --data-urlencode 'query=up{job="vuln-exporter"}'` → value `"1"` |
 
 ## Known limitations

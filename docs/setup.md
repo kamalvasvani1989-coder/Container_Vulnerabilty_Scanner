@@ -87,11 +87,13 @@ Values containing `$` or spaces are refused, because Docker Compose would misrea
 
 Open http://localhost:3000, log in as `admin`, and open **Dashboards → Vulnerability Scanner → Container Vulnerability Scanner**. The datasource and dashboard are provisioned from files in `monitoring/grafana/`; nothing is clicked together by hand.
 
-Optional: load the scan history from before the stack existed (run once, with the stack up):
+**On a new install, run the backfill once** (with the stack up). Prometheus only counts scans that happen while it runs, so without it the "Scan results in selected range" panel and the trend charts ignore every scan made before today (they show 0 until new scans arrive). `deploy.sh monitoring` reminds you on its first run.
 
 ```bash
 bash monitoring/backfill.sh
 ```
+
+It replays the scan history from the GitHub and Jenkins artifacts, briefly stops Prometheus to import it, and starts it again. Safe to repeat (nothing is counted twice); run it again after the stack has been down for a while.
 
 ## 6. GitHub secret and branch ruleset
 
@@ -129,6 +131,33 @@ For example on AWS EC2 with Ubuntu 24.04 LTS. The differences from WSL:
 | Cost | About $0.045/hour for `t3.medium` in Mumbai (more in some regions). **Stop or terminate the VM when you are done** ([cost.md](cost.md)) |
 
 Everything else (`deploy.sh`, the one-time steps) is the same.
+
+### From a Windows laptop without WSL
+
+Windows 10/11 include an SSH client; use **PowerShell** (no administrator rights needed).
+
+```powershell
+# 1. Store the key and make it readable by you only (ssh refuses it otherwise:
+#    "UNPROTECTED PRIVATE KEY FILE")
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
+Copy-Item "$env:USERPROFILE\Downloads\my-key.pem" "$env:USERPROFILE\.ssh\my-key.pem"
+$key = "$env:USERPROFILE\.ssh\my-key.pem"
+icacls $key /inheritance:r
+icacls $key /grant:r "$($env:USERNAME):R"
+
+# 2. Connect (type the instance's public IP at the prompt)
+$ip = Read-Host "VM public IP"
+ssh -i $key ubuntu@$ip
+
+# 3. Web UIs: in a second PowerShell window (set $key and $ip again), keep this running
+ssh -i $key -N -L 8080:localhost:8080 -L 3000:localhost:3000 -L 9090:localhost:9090 ubuntu@$ip
+
+# 4. Copy the reports to the laptop and open the HTML report
+scp -i $key -r "ubuntu@${ip}:~/vuln-scanner/reports" "$env:USERPROFILE\Downloads\vm-reports"
+start "$env:USERPROFILE\Downloads\vm-reports\report.html"
+```
+
+Copy the `.pem` key between your own machines by USB or a local share; never by email or chat. A stopped and restarted VM gets a new public IP; if you changed network, also set the SSH rule back to "My IP".
 
 ## Start, stop, re-run
 
