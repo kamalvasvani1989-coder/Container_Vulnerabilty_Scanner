@@ -100,6 +100,7 @@ docs/                the documentation below
 | [docs/testing.md](docs/testing.md) | Unit tests and the cross-CI test matrix with results |
 | [docs/cost.md](docs/cost.md) | Current $0 setup and what production would cost |
 | [docs/beta-testing.md](docs/beta-testing.md) | Guide for beta testers: setup, tasks, how to report |
+| [docs/evidence](docs/evidence/README.md) | Screenshots from all six sprints, grouped by what they prove |
 
 ## Testing
 
